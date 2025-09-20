@@ -130,16 +130,16 @@ library PolicastLogic {
         uint256[] memory prices = new uint256[](market.optionCount);
 
         if (denom == 0) {
-            // Fallback to uniform distribution
-            uint256 uniform = 1e18 / market.optionCount;
+            // Fallback to uniform distribution scaled to PAYOUT_PER_SHARE
+            uint256 uniform = PAYOUT_PER_SHARE / market.optionCount;
             for (uint256 i = 0; i < market.optionCount; i++) {
                 options[i].currentPrice = uniform;
                 prices[i] = uniform;
             }
         } else {
-            // Calculate normalized probabilities
+            // Calculate normalized probabilities scaled to PAYOUT_PER_SHARE
             for (uint256 i = 0; i < market.optionCount; i++) {
-                uint256 p = (expVals[i] * 1e18) / denom;
+                uint256 p = (expVals[i] * PAYOUT_PER_SHARE) / denom;
                 options[i].currentPrice = p;
                 prices[i] = p;
             }
@@ -162,7 +162,7 @@ library PolicastLogic {
     }
 
     /**
-     * @notice Validate that prices are within acceptable bounds and sum to ~1
+     * @notice Validate that prices are within acceptable bounds and sum to ~PAYOUT_PER_SHARE
      * @param prices Array of prices to validate
      */
     function _validatePrices(uint256[] memory prices) private pure {
@@ -170,13 +170,13 @@ library PolicastLogic {
 
         for (uint256 i = 0; i < prices.length; i++) {
             uint256 p = prices[i];
-            if (p > 1e18) {
+            if (p > PAYOUT_PER_SHARE) {
                 revert PriceInvariant();
             }
             sumProb += p;
         }
 
-        if (sumProb + PROB_EPS < 1e18 || sumProb > 1e18 + PROB_EPS) {
+        if (sumProb + PROB_EPS < PAYOUT_PER_SHARE || sumProb > PAYOUT_PER_SHARE + PROB_EPS) {
             revert ProbabilityInvariant();
         }
     }

@@ -264,24 +264,6 @@ contract PolicastViews {
         });
     }
 
-    function getMarketOdds(uint256 _marketId) external view returns (uint256[] memory) {
-        (,,,, uint256 optionCount,,,,,,,,) = policast.getMarketInfo(_marketId);
-        uint256[] memory probs = new uint256[](optionCount);
-        uint256 sum = 0;
-        for (uint256 i = 0; i < optionCount; i++) {
-            uint256 p = this.calculateCurrentPrice(_marketId, i); // Use our improved current price calculation
-            probs[i] = p;
-            sum += p;
-        }
-        // Normalize if numerical drift (sum may deviate slightly from 1e18)
-        if (sum != 1e18 && sum != 0) {
-            for (uint256 i = 0; i < optionCount; i++) {
-                probs[i] = (probs[i] * 1e18) / sum;
-            }
-        }
-        return probs;
-    }
-
     function isMarketTradable(uint256 _marketId) external view returns (bool) {
         try policast.getMarketBasicInfo(_marketId) returns (
             string memory,
@@ -490,5 +472,24 @@ contract PolicastViews {
         require(_marketId < policast.marketCount(), "Market does not exist");
         // Return default values since financial details function was removed for size optimization
         return (0, 0, 0, false);
+    }
+
+    function getMarketOdds(uint256 _marketId) external view returns (uint256[] memory) {
+        require(_marketId < policast.marketCount(), "Market does not exist");
+
+        (,,,, uint256 optionCount,,,,) = policast.getMarketBasicInfo(_marketId);
+        uint256[] memory odds = new uint256[](optionCount);
+        uint256 PAYOUT_PER_SHARE = 100 * 1e18; // Match the main contract constant
+
+        for (uint256 i = 0; i < optionCount; i++) {
+            uint256 price = this.calculateCurrentPrice(_marketId, i);
+            // Calculate odds as PAYOUT_PER_SHARE / price
+            if (price > 0) {
+                odds[i] = (PAYOUT_PER_SHARE * 1e18) / price; // Scale by 1e18 for precision
+            } else {
+                odds[i] = 0;
+            }
+        }
+        return odds;
     }
 }

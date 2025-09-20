@@ -179,7 +179,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     uint256 public platformFeeRate = 200; // 2% (basis points)
     uint256 public constant MAX_OPTIONS = 10;
     uint256 public constant MIN_MARKET_DURATION = 1 hours;
-    uint256 public constant MAX_MARKET_DURATION = 365 days;
+    uint256 public constant MAX_MARKET_DURATION = 1000 days;
     address public feeCollector; // NEW: Address that can withdraw platform fees
     uint256 public totalPlatformFeesCollected; // NEW: Global cumulative platform fees (all time)
     uint256 public totalLockedPlatformFees; // NEW: Portion still locked (unresolved markets)
@@ -394,7 +394,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         market.userLiquidity = 0; // No user liquidity yet
 
         // Initialize options with equal starting prices
-        uint256 initialPrice = 1e18 / _optionNames.length; // Equal probability distribution
+        uint256 initialPrice = PAYOUT_PER_SHARE / _optionNames.length; // Equal price distribution
 
         for (uint256 i = 0; i < _optionNames.length; i++) {
             market.options[i] = MarketOption({
@@ -465,7 +465,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         market.userLiquidity = 0; // No user liquidity yet
 
         // Initialize options with equal starting prices
-        uint256 initialPrice = 1e18 / _optionNames.length; // Equal probability distribution
+        uint256 initialPrice = PAYOUT_PER_SHARE / _optionNames.length; // Equal price distribution
 
         for (uint256 i = 0; i < _optionNames.length; i++) {
             market.options[i] = MarketOption({

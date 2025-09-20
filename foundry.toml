@@ -9,3 +9,6 @@ libs = ["lib"]
 via_ir = true
 optimizer = true
 optimizer_runs = 200
+
+[etherscan]
+base = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/v2/api?chainid=8453" }
