@@ -8,8 +8,8 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {LMSRMath} from "./LMSRMath.sol";
 import {PolicastLogic} from "./PolicastLogic.sol";
-//check
 
+//check
 contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     // ERRORS
     error InsufficientBalance();
