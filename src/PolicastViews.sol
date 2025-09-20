@@ -297,8 +297,22 @@ contract PolicastViews {
         return resolved;
     }
 
-    function getMarketInvalidated(uint256 _marketId) external view returns (bool) {
-        (,,,,,,,, bool invalidated,,,,) = policast.getMarketInfo(_marketId);
+       function getMarketInvalidated(uint256 _marketId) external view returns (bool) {
+        (
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
+            bool invalidated,  // 10th field - invalidated
+            ,
+            ,
+            
+        ) = policast.getMarketInfo(_marketId);
         return invalidated;
     }
 
