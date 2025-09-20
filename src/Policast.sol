@@ -254,6 +254,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     event MarketPaused(uint256 indexed marketId);
     event PlatformFeesWithdrawn(address indexed collector, uint256 amount);
     event AdminLiquidityWithdrawn(uint256 indexed marketId, address indexed creator, uint256 amount);
+    event UnusedPrizePoolWithdrawn(uint256 indexed marketId, address indexed creator, uint256 amount);
     event FeeCollectorUpdated(address indexed oldCollector, address indexed newCollector);
     event BatchWinningsDistributed(uint256 indexed marketId, uint256 totalDistributed, uint256 recipientCount);
     event WinningsDistributedToUser(uint256 indexed marketId, address indexed user, uint256 amount);
@@ -782,7 +783,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
 
     // Backward-compatible wrapper (deprecated): aggregate proceeds bound ignored
     // Market Resolution
-    function resolveMarket(uint256 _marketId, uint256 _winningOptionId) external validMarket(_marketId) {
+    function resolveMarket(uint256 _marketId, uint256 _winningOptionId) external nonReentrant validMarket(_marketId) {
         if (msg.sender != owner() && !hasRole(QUESTION_RESOLVE_ROLE, msg.sender)) revert NotAuthorized();
         Market storage market = markets[_marketId];
 
@@ -802,6 +803,20 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         market.winningOptionId = _winningOptionId;
         market.resolved = true;
 
+        // Auto-transfer admin liquidity back to creator (just like invalidateMarket does)
+        uint256 adminRefund = 0;
+        if (!market.adminLiquidityClaimed && market.adminInitialLiquidity > 0) {
+            adminRefund = market.adminInitialLiquidity;
+            market.adminLiquidityClaimed = true;
+        }
+
+        // Handle free market unused prize pool
+        uint256 unusedPrizePool = 0;
+        if (market.marketType == MarketType.FREE_ENTRY) {
+            unusedPrizePool = market.freeConfig.remainingPrizePool;
+            market.freeConfig.remainingPrizePool = 0;
+        }
+
         // Unlock platform fees for this market (if any)
         if (!market.feesUnlocked && market.platformFeesCollected > 0) {
             uint256 amount = market.platformFeesCollected;
@@ -816,7 +831,25 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
             emit FeesUnlocked(_marketId, amount);
         }
 
+        // Transfer admin liquidity back to creator
+        if (adminRefund > 0) {
+            if (!bettingToken.transfer(market.creator, adminRefund)) revert TransferFailed();
+        }
+
+        // Transfer unused prize pool back to creator
+        if (unusedPrizePool > 0) {
+            if (!bettingToken.transfer(market.creator, unusedPrizePool)) revert TransferFailed();
+        }
+
         emit MarketResolved(_marketId, _winningOptionId, msg.sender);
+        
+        if (adminRefund > 0) {
+            emit AdminLiquidityWithdrawn(_marketId, market.creator, adminRefund);
+        }
+        
+        if (unusedPrizePool > 0) {
+            emit UnusedPrizePoolWithdrawn(_marketId, market.creator, unusedPrizePool);
+        }
     }
 
     // Payout Functions
