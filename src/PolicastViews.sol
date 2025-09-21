@@ -111,13 +111,15 @@ contract PolicastViews {
                     }
                     
                     if (!hasAnyShares) {
-                        return 1e18 / optionCount; // Equal probability for all options
+                        // Return actual market price (PAYOUT_PER_SHARE / optionCount)
+                        return currentPrice; // This is already set correctly in market creation
                     }
                 }
                 
                 return currentPrice;
             } catch {
-                return 1e18 / optionCount; // Fallback to equal probability
+                // Fallback: return proportional share of PAYOUT_PER_SHARE (100 tokens)
+                return (100 * 1e18) / optionCount;
             }
         } catch {
             return 0;

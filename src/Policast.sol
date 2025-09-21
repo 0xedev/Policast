@@ -572,214 +572,237 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         // Events after successful interaction
         emit FreeTokensClaimed(_marketId, msg.sender, freeTokens);
     }
+//checkpoint
+    function _previewPostMarginal(uint256 _marketId, uint256 _optionId, uint256 _quantity)
+    internal
+    view
+    returns (uint256 postMarginal)
+{
+    Market storage market = markets[_marketId];
+    uint256[] memory tempShares = new uint256[](market.optionCount);
+    for (uint256 i = 0; i < market.optionCount; i++) {
+        tempShares[i] = market.options[i].totalShares;
+    }
+    tempShares[_optionId] += _quantity;
+
+    uint256 baseShares = 20 * 1e18;
+    uint256 totalWeightedShares = 0;
+    for (uint256 i = 0; i < market.optionCount; i++) {
+        totalWeightedShares += _sqrt((tempShares[i] + baseShares) * 1e18);
+    }
+    uint256 priceSum = 0;
+    uint256 maxSharesIndex = 0;
+    uint256 maxShares = tempShares[0];
+    for (uint256 i = 1; i < market.optionCount; i++) {
+        if (tempShares[i] > maxShares) {
+            maxShares = tempShares[i];
+            maxSharesIndex = i;
+        }
+    }
+    for (uint256 i = 0; i < market.optionCount; i++) {
+        uint256 weight = _sqrt((tempShares[i] + baseShares) * 1e18);
+        uint256 tempPrice = (weight * 100 * 1e18) / totalWeightedShares;
+        if (i == _optionId) postMarginal = tempPrice;
+        priceSum += tempPrice;
+    }
+    if (priceSum != 100 * 1e18) {
+        uint256 adjustment = (100 * 1e18) - priceSum;
+        if (maxSharesIndex == _optionId) postMarginal += adjustment;
+    }
+}
 
     // New extended version with aggregate slippage: _maxTotalCost (0 means ignore aggregate bound)
-    function buyShares(
-        uint256 _marketId,
-        uint256 _optionId,
-        uint256 _quantity,
-        uint256 _maxPricePerShare,
-        uint256 _maxTotalCost
-    )
-        public
-        nonReentrant
-        whenNotPaused
-        validMarket(_marketId)
-        marketActive(_marketId)
-        validOption(_marketId, _optionId)
-    {
-        if (_quantity == 0) revert AmountMustBePositive();
-        if (!markets[_marketId].validated) revert MarketNotValidated();
-        // Add overflow protection
-        if (_quantity > type(uint128).max) revert InvalidInput();
-        // Note: No artificial cap on _maxPricePerShare - users can set their own risk tolerance
+  function buyShares(
+    uint256 _marketId,
+    uint256 _optionId,
+    uint256 _quantity,
+    uint256 _maxPricePerShare,
+    uint256 _maxTotalCost
+)
+    public
+    nonReentrant
+    whenNotPaused
+    validMarket(_marketId)
+    marketActive(_marketId)
+    validOption(_marketId, _optionId)
+{
+    if (_quantity == 0) revert AmountMustBePositive();
+    if (!markets[_marketId].validated) revert MarketNotValidated();
+    if (_quantity > type(uint128).max) revert InvalidInput();
 
-        Market storage market = markets[_marketId];
-        MarketOption storage option = market.options[_optionId];
-        uint256 costBefore = _lmsrCost(_marketId);
-        uint256 optionCount = market.optionCount;
-        uint256[] memory sharesAfter = new uint256[](optionCount);
-        for (uint256 i = 0; i < optionCount; i++) {
-            sharesAfter[i] = market.options[i].totalShares;
-        }
-        sharesAfter[_optionId] += _quantity;
-        uint256 costAfter = _lmsrCostGivenShares(_marketId, sharesAfter);
-        if (costAfter < costBefore) revert InconsistentCostInvariant();
-        uint256 rawCost = costAfter - costBefore;
-        if (rawCost == 0) revert PriceTooLow();
+    Market storage market = markets[_marketId];
+    MarketOption storage option = market.options[_optionId];
+    
+    // Preview post-trade marginal for charging
+    uint256 postMarginal = _previewPostMarginal(_marketId, _optionId, _quantity);
+    if (postMarginal == 0) revert PriceTooLow();
 
-        uint256 fee = (rawCost * platformFeeRate) / 10000;
-        uint256 totalCost = rawCost + fee;
-        uint256 effectiveAvg = (totalCost * 1e18) / _quantity;
-        if (effectiveAvg > _maxPricePerShare) revert PriceTooHigh();
-        if (_maxTotalCost != 0) {
-            if (totalCost > _maxTotalCost) revert SlippageExceeded();
-        }
+    uint256 rawCost = (postMarginal * _quantity) / 1e18;
+    uint256 fee = (rawCost * platformFeeRate) / 10000;
+    uint256 totalCost = rawCost + fee;
+    uint256 effectiveAvg = (totalCost * 1e18) / _quantity;
+    if (effectiveAvg > _maxPricePerShare) revert PriceTooHigh();
+    if (_maxTotalCost != 0) {
+        if (totalCost > _maxTotalCost) revert SlippageExceeded();
+    }
 
-        // Effects: Update all state before external call
-        if (market.userShares[msg.sender][_optionId] == 0 && _isNewParticipant(msg.sender, _marketId)) {
-            market.participants.push(msg.sender);
-            if (userPortfolios[msg.sender].totalInvested == 0) {
-                allParticipants.push(msg.sender);
-            }
-        }
-        market.userShares[msg.sender][_optionId] += _quantity;
-        option.totalShares += _quantity;
-        _updateMaxOptionShares(_marketId, _optionId);
-        option.totalVolume += rawCost;
-        market.userLiquidity += rawCost;
-        market.totalVolume += rawCost;
-        market.platformFeesCollected += fee;
-        totalPlatformFeesCollected += fee;
-        totalLockedPlatformFees += fee; // lock until resolution
-
-        userPortfolios[msg.sender].totalInvested += totalCost;
-        userPortfolios[msg.sender].tradeCount++;
-        emit UserPortfolioUpdated(
-            msg.sender,
-            userPortfolios[msg.sender].totalInvested,
-            userPortfolios[msg.sender].totalWinnings,
-            userPortfolios[msg.sender].unrealizedPnL,
-            userPortfolios[msg.sender].realizedPnL,
-            userPortfolios[msg.sender].tradeCount
-        );
-        _updateLMSRPrices(_marketId);
-        _postBuySolvencyCheck(_marketId);
-
-        priceHistory[_marketId][_optionId].push(
-            PricePoint({price: option.currentPrice, timestamp: block.timestamp, volume: rawCost})
-        );
-        Trade memory trade = Trade({
-            marketId: _marketId,
-            optionId: _optionId,
-            buyer: msg.sender,
-            seller: address(0),
-            price: option.currentPrice,
-            quantity: _quantity,
-            timestamp: block.timestamp
-        });
-        userTradeHistory[msg.sender].push(trade);
-        marketTrades[_marketId].push(trade);
-
-        // Interactions: External call at the very end
-        if (!bettingToken.transferFrom(msg.sender, address(this), totalCost)) revert TransferFailed();
-
-        // Events after successful interaction
-        emit FeeAccrued(_marketId, _optionId, true, rawCost, fee);
-        emit TradeExecuted(_marketId, _optionId, msg.sender, address(0), option.currentPrice, _quantity, tradeCount++);
-        globalTradeCount++; // Track global trade count
-        emit FeeCollected(_marketId, fee);
-        if (_maxTotalCost != 0) {
-            emit SlippageProtect(_marketId, _optionId, true, _quantity, _maxTotalCost, totalCost);
+    // Effects: Update all state before external call
+    if (market.userShares[msg.sender][_optionId] == 0 && _isNewParticipant(msg.sender, _marketId)) {
+        market.participants.push(msg.sender);
+        if (userPortfolios[msg.sender].totalInvested == 0) {
+            allParticipants.push(msg.sender);
         }
     }
+    market.userShares[msg.sender][_optionId] += _quantity;
+    option.totalShares += _quantity;
+    _updateMaxOptionShares(_marketId, _optionId);
+    option.totalVolume += rawCost;
+    market.userLiquidity += rawCost;
+    market.totalVolume += rawCost;
+    market.platformFeesCollected += fee;
+    totalPlatformFeesCollected += fee;
+    totalLockedPlatformFees += fee; // lock until resolution
+
+    userPortfolios[msg.sender].totalInvested += totalCost;
+    userPortfolios[msg.sender].tradeCount++;
+    emit UserPortfolioUpdated(
+        msg.sender,
+        userPortfolios[msg.sender].totalInvested,
+        userPortfolios[msg.sender].totalWinnings,
+        userPortfolios[msg.sender].unrealizedPnL,
+        userPortfolios[msg.sender].realizedPnL,
+        userPortfolios[msg.sender].tradeCount
+    );
+    _updateLMSRPrices(_marketId);
+    _postBuySolvencyCheck(_marketId);
+
+    priceHistory[_marketId][_optionId].push(
+        PricePoint({price: postMarginal, timestamp: block.timestamp, volume: rawCost})
+    );
+    Trade memory trade = Trade({
+        marketId: _marketId,
+        optionId: _optionId,
+        buyer: msg.sender,
+        seller: address(0),
+        price: postMarginal,
+        quantity: _quantity,
+        timestamp: block.timestamp
+    });
+    userTradeHistory[msg.sender].push(trade);
+    marketTrades[_marketId].push(trade);
+
+    // Interactions: External call at the very end
+    if (!bettingToken.transferFrom(msg.sender, address(this), totalCost)) revert TransferFailed();
+
+    // Events after successful interaction
+    emit FeeAccrued(_marketId, _optionId, true, rawCost, fee);
+    emit TradeExecuted(_marketId, _optionId, msg.sender, address(0), postMarginal, _quantity, tradeCount++);
+    globalTradeCount++; // Track global trade count
+    emit FeeCollected(_marketId, fee);
+    if (_maxTotalCost != 0) {
+        emit SlippageProtect(_marketId, _optionId, true, _quantity, _maxTotalCost, totalCost);
+    }
+}
 
     // Backward-compatible wrapper (deprecated): aggregate bound ignored
-    function sellShares(
-        uint256 _marketId,
-        uint256 _optionId,
-        uint256 _quantity,
-        uint256 _minPricePerShare,
-        uint256 _minTotalProceeds
-    )
-        public
-        nonReentrant
-        whenNotPaused
-        validMarket(_marketId)
-        marketActive(_marketId)
-        validOption(_marketId, _optionId)
-    {
-        if (_quantity == 0) revert AmountMustBePositive();
-        if (markets[_marketId].userShares[msg.sender][_optionId] < _quantity) revert InsufficientShares();
-        // Add overflow protection
-        if (_quantity > type(uint128).max) revert InvalidInput();
-        // Note: No artificial cap on _minPricePerShare - users can set their own risk tolerance
+   function sellShares(
+    uint256 _marketId,
+    uint256 _optionId,
+    uint256 _quantity,
+    uint256 _minPricePerShare,
+    uint256 _minTotalProceeds
+)
+    public
+    nonReentrant
+    whenNotPaused
+    validMarket(_marketId)
+    marketActive(_marketId)
+    validOption(_marketId, _optionId)
+{
+    if (_quantity == 0) revert AmountMustBePositive();
+    if (markets[_marketId].userShares[msg.sender][_optionId] < _quantity) revert InsufficientShares();
+    if (_quantity > type(uint128).max) revert InvalidInput();
 
-        Market storage market = markets[_marketId];
-        MarketOption storage option = market.options[_optionId];
-        uint256 costBefore = _lmsrCost(_marketId);
-        uint256 optionCount = market.optionCount;
-        uint256[] memory sharesAfter = new uint256[](optionCount);
-        for (uint256 i = 0; i < optionCount; i++) {
-            sharesAfter[i] = market.options[i].totalShares;
-        }
-        sharesAfter[_optionId] -= _quantity; // safe due to check above
-        uint256 costAfter = _lmsrCostGivenShares(_marketId, sharesAfter);
-        if (costBefore < costAfter) revert InconsistentCostInvariant();
-        uint256 rawRefund = costBefore - costAfter;
-        if (rawRefund == 0) revert PriceTooLow();
-        uint256 fee = (rawRefund * platformFeeRate) / 10000;
-        uint256 netRefund = rawRefund - fee;
-        uint256 effectiveAvg = (netRefund * 1e18) / _quantity;
-        if (effectiveAvg < _minPricePerShare) revert PriceTooLow();
-        if (_minTotalProceeds != 0) {
-            if (netRefund < _minTotalProceeds) revert SlippageExceeded();
-        }
+    Market storage market = markets[_marketId];
+    MarketOption storage option = market.options[_optionId];
+    
+    // Pre-trade marginal for immediate payout
+    uint256 preMarginal = option.currentPrice;
+    if (preMarginal == 0) revert PriceTooLow();
 
-        // Effects: Update all state before external call
-        market.userShares[msg.sender][_optionId] -= _quantity;
-        option.totalShares -= _quantity;
-        if (option.totalShares + _quantity == market.maxOptionShares) {
-            uint256 newMax = 0;
-            for (uint256 i = 0; i < market.optionCount; i++) {
-                uint256 ts = market.options[i].totalShares;
-                if (ts > newMax) newMax = ts;
-            }
-            market.maxOptionShares = newMax;
-        }
-
-        option.totalVolume += rawRefund;
-        market.totalVolume += rawRefund;
-        market.platformFeesCollected += fee;
-        totalPlatformFeesCollected += fee;
-        totalLockedPlatformFees += fee; // lock until resolution
-
-        if (market.userLiquidity >= rawRefund) {
-            market.userLiquidity -= rawRefund;
-        } else {
-            market.userLiquidity = 0;
-        }
-
-        userPortfolios[msg.sender].tradeCount++;
-        userPortfolios[msg.sender].realizedPnL += int256(netRefund);
-        emit UserPortfolioUpdated(
-            msg.sender,
-            userPortfolios[msg.sender].totalInvested,
-            userPortfolios[msg.sender].totalWinnings,
-            userPortfolios[msg.sender].unrealizedPnL,
-            userPortfolios[msg.sender].realizedPnL,
-            userPortfolios[msg.sender].tradeCount
-        );
-
-        _updateLMSRPrices(_marketId);
-        priceHistory[_marketId][_optionId].push(
-            PricePoint({price: option.currentPrice, timestamp: block.timestamp, volume: rawRefund})
-        );
-        Trade memory trade = Trade({
-            marketId: _marketId,
-            optionId: _optionId,
-            buyer: address(0),
-            seller: msg.sender,
-            price: option.currentPrice,
-            quantity: _quantity,
-            timestamp: block.timestamp
-        });
-        userTradeHistory[msg.sender].push(trade);
-        marketTrades[_marketId].push(trade);
-
-        // Interactions: External call at the very end
-        if (!bettingToken.transfer(msg.sender, netRefund)) revert TransferFailed();
-
-        // Events after successful interaction
-        emit FeeAccrued(_marketId, _optionId, false, rawRefund, fee);
-        emit SharesSold(_marketId, _optionId, msg.sender, _quantity, effectiveAvg);
-        emit TradeExecuted(_marketId, _optionId, address(0), msg.sender, effectiveAvg, _quantity, tradeCount++);
-        globalTradeCount++; // Track global trade count
-        emit FeeCollected(_marketId, fee);
-        if (_minTotalProceeds != 0) {
-            emit SlippageProtect(_marketId, _optionId, false, _quantity, _minTotalProceeds, netRefund);
-        }
+    uint256 rawRefund = (preMarginal * _quantity) / 1e18;
+    uint256 fee = (rawRefund * platformFeeRate) / 10000;
+    uint256 netRefund = rawRefund - fee;
+    uint256 effectiveAvg = (netRefund * 1e18) / _quantity;
+    if (effectiveAvg < _minPricePerShare) revert PriceTooLow();
+    if (_minTotalProceeds != 0) {
+        if (netRefund < _minTotalProceeds) revert SlippageExceeded();
     }
+
+    // Effects: Update all state before external call
+    market.userShares[msg.sender][_optionId] -= _quantity;
+    option.totalShares -= _quantity;
+    if (option.totalShares + _quantity == market.maxOptionShares) {
+        uint256 newMax = 0;
+        for (uint256 i = 0; i < market.optionCount; i++) {
+            uint256 ts = market.options[i].totalShares;
+            if (ts > newMax) newMax = ts;
+        }
+        market.maxOptionShares = newMax;
+    }
+
+    option.totalVolume += rawRefund;
+    market.totalVolume += rawRefund;
+    market.platformFeesCollected += fee;
+    totalPlatformFeesCollected += fee;
+    totalLockedPlatformFees += fee; // lock until resolution
+
+    if (market.userLiquidity >= rawRefund) {
+        market.userLiquidity -= rawRefund;
+    } else {
+        market.userLiquidity = 0;
+    }
+
+    userPortfolios[msg.sender].tradeCount++;
+    userPortfolios[msg.sender].realizedPnL += int256(netRefund);
+    emit UserPortfolioUpdated(
+        msg.sender,
+        userPortfolios[msg.sender].totalInvested,
+        userPortfolios[msg.sender].totalWinnings,
+        userPortfolios[msg.sender].unrealizedPnL,
+        userPortfolios[msg.sender].realizedPnL,
+        userPortfolios[msg.sender].tradeCount
+    );
+
+    _updateLMSRPrices(_marketId);
+    priceHistory[_marketId][_optionId].push(
+        PricePoint({price: preMarginal, timestamp: block.timestamp, volume: rawRefund})
+    );
+    Trade memory trade = Trade({
+        marketId: _marketId,
+        optionId: _optionId,
+        buyer: address(0),
+        seller: msg.sender,
+        price: preMarginal,
+        quantity: _quantity,
+        timestamp: block.timestamp
+    });
+    userTradeHistory[msg.sender].push(trade);
+    marketTrades[_marketId].push(trade);
+
+    // Interactions: External call at the very end
+    if (!bettingToken.transfer(msg.sender, netRefund)) revert TransferFailed();
+
+    // Events after successful interaction
+    emit FeeAccrued(_marketId, _optionId, false, rawRefund, fee);
+    emit SharesSold(_marketId, _optionId, msg.sender, _quantity, effectiveAvg);
+    emit TradeExecuted(_marketId, _optionId, address(0), msg.sender, preMarginal, _quantity, tradeCount++);
+    globalTradeCount++; // Track global trade count
+    emit FeeCollected(_marketId, fee);
+    if (_minTotalProceeds != 0) {
+        emit SlippageProtect(_marketId, _optionId, false, _quantity, _minTotalProceeds, netRefund);
+    }
+}
 
     // Backward-compatible wrapper (deprecated): aggregate proceeds bound ignored
     // Market Resolution
@@ -1002,33 +1025,71 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
 
     function _updateLMSRPrices(uint256 _marketId) internal {
         Market storage market = markets[_marketId];
-
-        PolicastLogic.MarketData memory marketData = PolicastLogic.MarketData({
-            optionCount: market.optionCount,
-            lmsrB: market.lmsrB,
-            maxOptionShares: market.maxOptionShares,
-            userLiquidity: market.userLiquidity,
-            adminInitialLiquidity: market.adminInitialLiquidity
-        });
-
-        // Convert storage mapping to array for library call
-        PolicastLogic.OptionData[] memory options = new PolicastLogic.OptionData[](market.optionCount);
+        
+        // Polymarket-style pricing with dampened square root for realistic curves
+        uint256[] memory prices = new uint256[](market.optionCount);
+        uint256 baseShares = 20e18; // Higher baseline to prevent extreme price movements
+        
+        // Calculate total weighted shares using dampened square root
+        uint256 totalWeightedShares = 0;
         for (uint256 i = 0; i < market.optionCount; i++) {
-            options[i] = PolicastLogic.OptionData({
-                totalShares: market.options[i].totalShares,
-                currentPrice: market.options[i].currentPrice
-            });
+            uint256 shares = market.options[i].totalShares;
+            // Dampened square root: sqrt(shares + baseShares) prevents extreme concentrations
+            uint256 weight = _sqrt((shares + baseShares) * 1e18);
+            totalWeightedShares += weight;
         }
-
-        // Call library function to update prices
-        uint256[] memory prices = PolicastLogic.updateLMSRPrices(marketData, options);
-
-        // Update storage with new prices
+        
+        // Distribute exactly 100 tokens based on weighted demand
+        uint256 priceSum = 0;
         for (uint256 i = 0; i < market.optionCount; i++) {
-            market.options[i].currentPrice = options[i].currentPrice;
+            uint256 shares = market.options[i].totalShares;
+            uint256 weight = _sqrt((shares + baseShares) * 1e18);
+            
+            // Price = (weight / totalWeight) * 100 tokens
+            uint256 price = (weight * 100 * 1e18) / totalWeightedShares;
+            market.options[i].currentPrice = price;
+            prices[i] = price;
+            priceSum += price;
         }
-
+        
+        // Guarantee exact 100 token sum (handle rounding errors)
+        if (priceSum != 100 * 1e18) {
+            uint256 adjustment = (100 * 1e18) - priceSum;
+            
+            // Find option with highest shares to apply adjustment
+            uint256 maxSharesIndex = 0;
+            uint256 maxShares = market.options[0].totalShares;
+            for (uint256 i = 1; i < market.optionCount; i++) {
+                if (market.options[i].totalShares > maxShares) {
+                    maxShares = market.options[i].totalShares;
+                    maxSharesIndex = i;
+                }
+            }
+            
+            // Apply adjustment to maintain exact 100 token backing
+            market.options[maxSharesIndex].currentPrice += adjustment;
+            prices[maxSharesIndex] += adjustment;
+        }
+        
         emit PricesUpdated(_marketId, prices);
+    }
+    
+    // Helper function for square root calculation
+    function _sqrt(uint256 x) private pure returns (uint256) {
+        if (x == 0) return 0;
+        uint256 z = (x + 1) / 2;
+        uint256 y = x;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
+        return y;
+    }
+
+    function _normalizeToHundred(uint256[] memory prices) private pure {
+        // Legacy function kept for compatibility - new system auto-normalizes
+        // This function is no longer used as the new system automatically
+        // ensures prices sum to exactly 100 tokens
     }
 
     function _computeB(uint256 _initialLiquidity, uint256 _optionCount) internal pure returns (uint256) {
