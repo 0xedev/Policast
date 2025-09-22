@@ -55,7 +55,7 @@ library PolicastLogic {
 
         (uint256 maxScaled, uint256 lnSumExp) = LMSRMath.logSumExp(scaled);
         uint256 lmsrRaw = (b * (maxScaled + lnSumExp)) / 1e18;
-        return lmsrRaw; // Remove PAYOUT_PER_SHARE scaling - prices are now option-specific
+        return lmsrRaw * 100; // Apply 100x scaling for 1:100 share-to-token ratio
     }
 
     /**
@@ -78,7 +78,7 @@ library PolicastLogic {
 
         (uint256 maxScaled, uint256 lnSumExp) = LMSRMath.logSumExp(scaled);
         uint256 lmsrRaw = (b * (maxScaled + lnSumExp)) / 1e18;
-        return lmsrRaw; // Remove PAYOUT_PER_SHARE scaling - prices are now option-specific
+        return lmsrRaw * 100; // Apply 100x scaling for 1:100 share-to-token ratio
     }
 
     /**
@@ -86,7 +86,7 @@ library PolicastLogic {
      * @param market Market data structure
      */
     function validateBuySolvency(MarketData memory market) internal pure {
-        uint256 liability = market.maxOptionShares; // Remove PAYOUT_PER_SHARE scaling
+        uint256 liability = market.maxOptionShares * 100; // Apply 100x scaling for 1:100 share-to-token ratio
         uint256 available = market.userLiquidity + market.adminInitialLiquidity;
 
         if (available < liability) {

@@ -111,13 +111,13 @@ contract PolicastViews {
                     }
                     
                     if (!hasAnyShares) {
-                        return (100 * 1e18) / optionCount; // Equal probability for all options with correct scaling
+                        return 1e18 / optionCount; // Equal probability for all options (sum = 1e18)
                     }
                 }
                 
                 return currentPrice;
             } catch {
-                return (100 * 1e18) / optionCount; // Fallback to equal probability with correct scaling
+                return 1e18 / optionCount; // Fallback to equal probability (sum = 1e18)
             }
         } catch {
             return 0;

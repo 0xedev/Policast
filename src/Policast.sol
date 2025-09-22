@@ -623,9 +623,9 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         Market storage market = markets[_marketId];
         MarketOption storage option = market.options[_optionId];
         
-        // Use option-specific pricing instead of cost difference approach
-        // Price = current option price * quantity (like RT.sol does)
-        uint256 rawCost = (option.currentPrice * _quantity) / 1e18;
+        // Use option-specific pricing with 1:100 share-to-token ratio
+        // 1 share costs 100x the probability price in tokens
+        uint256 rawCost = (option.currentPrice * _quantity * 100) / 1e18;
         if (rawCost == 0) revert PriceTooLow();
 
         uint256 fee = (rawCost * platformFeeRate) / 10000;
@@ -720,9 +720,9 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         Market storage market = markets[_marketId];
         MarketOption storage option = market.options[_optionId];
         
-        // Use option-specific pricing instead of cost difference approach
-        // Refund = current option price * quantity (consistent with buy logic)
-        uint256 rawRefund = (option.currentPrice * _quantity) / 1e18;
+        // Use option-specific pricing with 1:100 share-to-token ratio
+        // 1 share refunds 100x the probability price in tokens
+        uint256 rawRefund = (option.currentPrice * _quantity * 100) / 1e18;
         if (rawRefund == 0) revert PriceTooLow();
         uint256 fee = (rawRefund * platformFeeRate) / 10000;
         uint256 netRefund = rawRefund - fee;
