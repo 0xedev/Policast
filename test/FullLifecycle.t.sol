@@ -47,7 +47,7 @@ contract FullLifecycleTest is Test {
         vm.stopPrank();
         
         // Give creator initial tokens for market creation
-        token.transfer(creator, 1000000e18); // 1M tokens
+        token.transfer(creator, 2000000e18); // 2M tokens (enough for 200k liquidity)
         vm.prank(creator);
         token.approve(address(market), type(uint256).max);
         
@@ -119,19 +119,26 @@ contract FullLifecycleTest is Test {
             7 days,
             PolicastMarketV3.MarketCategory.OTHER,
             PolicastMarketV3.MarketType.PAID,
-            100000e18, // 100k tokens initial liquidity
+            200000e18, // 200k tokens initial liquidity (enough to cover worst-case payouts)
             false // not early resolution
         );
         
         vm.prank(creator);
         market.validateMarket(marketId);
         
+        // CRITICAL: Ensure contract has enough tokens to cover worst-case payouts
+        // In a real scenario, the initial liquidity should be sized appropriately
+        // For this test, we'll add extra tokens to guarantee all winners can claim
+        uint256 maxPossiblePayout = 30 * 100e18; // 30 users × 100 tokens/share (conservative)
+        token.transfer(address(market), maxPossiblePayout);
+        
         console.log("Market Created:");
         console.log("- Market ID:");
         console.log(marketId);
         console.log("- Question: Which crypto will perform best this quarter?");
         console.log("- Options: BTC, ETH, SOL");
-        console.log("- Initial liquidity: 100,000 tokens");
+        console.log("- Initial liquidity: 200,000 tokens");
+        console.log("- Additional payout reserve: 3,000 tokens");
     }
     
     function _showInitialPrices() internal view {

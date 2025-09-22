@@ -831,12 +831,9 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         market.winningOptionId = _winningOptionId;
         market.resolved = true;
 
-        // Auto-transfer admin liquidity back to creator (just like invalidateMarket does)
-        uint256 adminRefund = 0;
-        if (!market.adminLiquidityClaimed && market.adminInitialLiquidity > 0) {
-            adminRefund = market.adminInitialLiquidity;
-            market.adminLiquidityClaimed = true;
-        }
+        // Note: Admin liquidity remains in contract for winner payouts
+        // Creators can manually withdraw remaining liquidity after all claims
+        
 
         // Handle free market unused prize pool
         uint256 unusedPrizePool = 0;
@@ -859,10 +856,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
             emit FeesUnlocked(_marketId, amount);
         }
 
-        // Transfer admin liquidity back to creator
-        if (adminRefund > 0) {
-            if (!bettingToken.transfer(market.creator, adminRefund)) revert TransferFailed();
-        }
+        // Admin liquidity remains in contract - no transfer needed
 
         // Transfer unused prize pool back to creator
         if (unusedPrizePool > 0) {
@@ -871,9 +865,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
 
         emit MarketResolved(_marketId, _winningOptionId, msg.sender);
         
-        if (adminRefund > 0) {
-            emit AdminLiquidityWithdrawn(_marketId, market.creator, adminRefund);
-        }
+        // Admin liquidity remains in contract - no withdrawal event needed
         
         if (unusedPrizePool > 0) {
             emit UnusedPrizePoolWithdrawn(_marketId, market.creator, unusedPrizePool);
