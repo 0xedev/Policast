@@ -48,7 +48,7 @@ library LMSRMath {
         // Natural log for y in (0, +inf). 1e18 scaling. Uses range reduction to (1,2]
         // then atanh series: ln(y) = 2*( z + z^3/3 + z^5/5 + z^7/7 + z^9/9 ), z=(y-1)/(y+1)
         require(y > 0, "LN_ZERO");
-        require(y >= 1e18, "UnsupportedRange"); // Prevent issues with y < 1
+        // Note: Removed require(y >= 1e18) to support full range
         
         int256 result = 0;
         // Range reduce by powers of two to bring y into (0.5, 2]
@@ -57,7 +57,7 @@ library LMSRMath {
             result += int256(_LN2);
         }
         while (y <= 5e17) {
-            // <0.5
+            // <0.5 - now this branch is reachable
             y = y * 2;
             result -= int256(_LN2);
         }

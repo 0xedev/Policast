@@ -1246,41 +1246,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         return market.userShares[_user][_optionId];
     }
 
-    // NEW: Calculate user's unrealized PnL across all positions
-    function calculateUnrealizedPnL(address _user) external view returns (int256) {
-        int256 totalUnrealized = 0;
-        
-        // Iterate through all markets to find user's positions
-        for (uint256 marketId = 1; marketId <= marketCount; marketId++) {
-            Market storage market = markets[marketId];
-            if (market.invalidated) continue;
-            
-            for (uint256 optionId = 0; optionId < market.optionCount; optionId++) {
-                uint256 userShares = market.userShares[_user][optionId];
-                if (userShares == 0) continue;
-                
-                uint256 costBasis = userCostBasis[_user][marketId][optionId];
-                uint256 currentValue;
-                
-                if (market.resolved) {
-                    // For resolved markets, use payout value
-                    if (market.winningOptionId == optionId) {
-                        currentValue = userShares * PAYOUT_PER_SHARE / 1e18;
-                    } else {
-                        currentValue = 0; // Losing positions worth nothing
-                    }
-                } else {
-                    // For unresolved markets, use current market price
-                    currentValue = userShares * market.options[optionId].currentPrice / 1e18;
-                }
-                
-                totalUnrealized += int256(currentValue) - int256(costBasis);
-            }
-        }
-        
-        return totalUnrealized;
-    }
-
     // NEW: Additional getters for PolicastViews contract
     function getTotalFeesCollected() external view returns (uint256) {
         return totalPlatformFeesCollected;

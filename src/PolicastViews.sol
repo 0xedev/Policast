@@ -575,4 +575,47 @@ contract PolicastViews {
         }
         return odds;
     }
+
+    // Calculate user's unrealized PnL across all positions
+    function calculateUnrealizedPnL(address _user) external view returns (int256) {
+        int256 totalUnrealized = 0;
+        
+        // Iterate through all markets to find user's positions
+        for (uint256 marketId = 1; marketId <= policast.marketCount(); marketId++) {
+            // Get market basic info to check if invalidated and resolved status
+            (,,,, uint256 optionCount, bool resolved,, bool invalidated, uint256 totalVolume) = policast.getMarketBasicInfo(marketId);
+            if (invalidated || totalVolume == 0) continue;
+            
+            // Get market info for winning option if resolved
+            uint256 winningOptionId = 0;
+            if (resolved) {
+                (,,,,,, winningOptionId,,,,,,) = policast.getMarketInfo(marketId);
+            }
+            
+            for (uint256 optionId = 0; optionId < optionCount; optionId++) {
+                uint256 userShares = policast.getMarketOptionUserShares(marketId, optionId, _user);
+                if (userShares == 0) continue;
+                
+                uint256 costBasis = policast.userCostBasis(_user, marketId, optionId);
+                uint256 currentValue;
+                
+                if (resolved) {
+                    // For resolved markets, use payout value
+                    if (winningOptionId == optionId) {
+                        currentValue = userShares * policast.PAYOUT_PER_SHARE() / 1e18;
+                    } else {
+                        currentValue = 0; // Losing positions worth nothing
+                    }
+                } else {
+                    // For unresolved markets, use current market price
+                    (,,,,uint256 currentPrice,) = policast.getMarketOption(marketId, optionId);
+                    currentValue = userShares * currentPrice / 1e18;
+                }
+                
+                totalUnrealized += int256(currentValue) - int256(costBasis);
+            }
+        }
+        
+        return totalUnrealized;
+    }
 }

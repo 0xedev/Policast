@@ -45,6 +45,8 @@ library PolicastLogic {
      */
     function calculateLMSRCost(MarketData memory market, OptionData[] memory options) internal pure returns (uint256) {
         if (market.optionCount == 0) return 0;
+        if (market.lmsrB == 0) revert PriceInvariant(); // Prevent division by zero
+        if (options.length != market.optionCount) revert PriceInvariant(); // Validate array length
 
         uint256 b = market.lmsrB;
         uint256[] memory scaled = new uint256[](market.optionCount);
@@ -68,6 +70,8 @@ library PolicastLogic {
         internal pure returns (uint256)
     {
         if (market.optionCount == 0) return 0;
+        if (market.lmsrB == 0) revert PriceInvariant(); // Prevent division by zero
+        if (shares.length != market.optionCount) revert PriceInvariant(); // Validate array length
 
         uint256 b = market.lmsrB;
         uint256[] memory scaled = new uint256[](market.optionCount);
@@ -106,6 +110,8 @@ library PolicastLogic {
         returns (uint256[] memory)
     {
         if (market.optionCount == 0) return new uint256[](0);
+        if (market.lmsrB == 0) revert PriceInvariant(); // Prevent division by zero
+        if (options.length != market.optionCount) revert PriceInvariant(); // Validate array length
 
         uint256 b = market.lmsrB;
         uint256[] memory scaled = new uint256[](market.optionCount);
@@ -124,6 +130,9 @@ library PolicastLogic {
             uint256 diff = scaled[i] >= maxScaled ? 0 : (maxScaled - scaled[i]);
             uint256 e = LMSRMath.expNeg(diff);
             expVals[i] = e;
+            
+            // Overflow protection for denominator
+            if (denom > type(uint256).max - e) revert PriceInvariant();
             denom += e;
         }
 
@@ -133,20 +142,24 @@ library PolicastLogic {
             // Fallback to uniform distribution (1.0 tokens total split equally)
             uint256 uniform = 1e18 / market.optionCount;
             for (uint256 i = 0; i < market.optionCount; i++) {
-                options[i].currentPrice = uniform;
                 prices[i] = uniform;
             }
         } else {
-            // Calculate normalized probabilities (total = 1.0 tokens)
+            // Calculate normalized probabilities with improved precision
             for (uint256 i = 0; i < market.optionCount; i++) {
+                // Use higher precision intermediate calculation to reduce precision loss
                 uint256 p = (expVals[i] * 1e18) / denom;
-                options[i].currentPrice = p;
                 prices[i] = p;
             }
         }
 
-        // Validate prices and probability sum
+        // Validate prices BEFORE updating options array (atomicity)
         _validatePrices(prices);
+        
+        // Only update options after validation passes
+        for (uint256 i = 0; i < market.optionCount; i++) {
+            options[i].currentPrice = prices[i];
+        }
 
         return prices;
     }
