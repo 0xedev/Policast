@@ -66,6 +66,8 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     error ProbabilityInvariant(); // NEW: Sum of probabilities outside tolerance
     error PriceInvariant(); // NEW: Individual price invalid (>1e18 or unexpected zero)
     error NoUnlockedFees(); // NEW: No unlocked fees available for withdrawal
+    error NoLiquidityToWithdraw(); // NEW: No admin liquidity available for withdrawal
+    error InsufficientContractBalance(); // NEW: Contract doesn't have enough tokens for withdrawal
 
     bytes32 public constant QUESTION_CREATOR_ROLE = keccak256("QUESTION_CREATOR_ROLE");
     bytes32 public constant QUESTION_RESOLVE_ROLE = keccak256("QUESTION_RESOLVE_ROLE");
@@ -882,7 +884,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         uint256 userWinningShares = market.userShares[msg.sender][market.winningOptionId];
         if (userWinningShares == 0) revert NoWinningShares();
         // Fixed payout per winning share (Polymarket-style)
-        uint256 winnings = userWinningShares * PAYOUT_PER_SHARE / 1e18; // assuming share units are 1e18 scaled
+        uint256 winnings = userWinningShares * PAYOUT_PER_SHARE;
 
         // Effects: Update all state before external call
         market.hasClaimed[msg.sender] = true;
@@ -930,17 +932,84 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     // NEW: Platform Fee Management
     // Backwards-compatible function now only withdraws unlocked fees
     function withdrawPlatformFees() external nonReentrant {
+
+    if (msg.sender != feeCollector && msg.sender != owner()) revert NotAuthorized();
         _withdrawUnlockedPlatformFees();
     }
 
     function _withdrawUnlockedPlatformFees() internal {
-        if (msg.sender != feeCollector && msg.sender != owner()) revert NotAuthorized();
+        
         uint256 amount = totalUnlockedPlatformFees;
         if (amount == 0) revert NoUnlockedFees();
         totalUnlockedPlatformFees = 0;
         totalWithdrawnPlatformFees += amount;
         if (!bettingToken.transfer(feeCollector, amount)) revert TransferFailed();
         emit PlatformFeesWithdrawn(feeCollector, amount);
+    }
+
+    // NEW: Admin Initial Liquidity Withdrawal
+    function withdrawAdminLiquidity(uint256 _marketId) 
+        external 
+        nonReentrant 
+        validMarket(_marketId) 
+    {
+        Market storage market = markets[_marketId];
+        
+        // Only market creator can withdraw their initial liquidity
+        if (msg.sender != market.creator) revert NotAuthorized();
+        
+        // Market must be resolved or invalidated
+        if (!market.resolved && !market.invalidated) revert MarketNotReady();
+        
+        // Check if already claimed
+        if (market.adminLiquidityClaimed) revert AdminLiquidityAlreadyClaimed();
+        
+        // Must have initial liquidity to withdraw
+        if (market.adminInitialLiquidity == 0) revert NoLiquidityToWithdraw();
+        
+        uint256 withdrawAmount = market.adminInitialLiquidity;
+        
+        // Effects: Update state before interaction
+        market.adminLiquidityClaimed = true;
+        
+        // Interactions: Transfer tokens
+        if (!bettingToken.transfer(market.creator, withdrawAmount)) revert TransferFailed();
+        
+        emit AdminLiquidityWithdrawn(_marketId, market.creator, withdrawAmount);
+    }
+
+    // NEW: Emergency token withdrawal (owner only)
+    function emergencyWithdraw(uint256 _amount) 
+        external 
+        onlyOwner 
+        nonReentrant 
+    {
+        if (_amount == 0) revert AmountMustBePositive();
+        
+        uint256 contractBalance = bettingToken.balanceOf(address(this));
+        if (contractBalance < _amount) revert InsufficientContractBalance();
+        
+        // Transfer tokens to owner
+        if (!bettingToken.transfer(owner(), _amount)) revert TransferFailed();
+        
+        emit AdminLiquidityWithdrawn(0, owner(), _amount); // Use marketId 0 for emergency withdrawals
+    }
+
+    // NEW: Get withdrawable admin liquidity for a market
+    function getWithdrawableAdminLiquidity(uint256 _marketId) 
+        external 
+        view 
+        validMarket(_marketId) 
+        returns (uint256) 
+    {
+        Market storage market = markets[_marketId];
+        
+        // Must be resolved or invalidated, and not already claimed
+        if ((!market.resolved && !market.invalidated) || market.adminLiquidityClaimed) {
+            return 0;
+        }
+        
+        return market.adminInitialLiquidity;
     }
 
     // Helper Functions
@@ -1042,9 +1111,9 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         // Call library function to update prices
         uint256[] memory prices = PolicastLogic.updateLMSRPrices(marketData, options);
 
-        // Update storage with new prices
+        // Update storage with new prices from returned array, not from options
         for (uint256 i = 0; i < market.optionCount; i++) {
-            market.options[i].currentPrice = options[i].currentPrice;
+            market.options[i].currentPrice = prices[i]; // Use prices[i] not options[i].currentPrice
         }
 
         emit PricesUpdated(_marketId, prices);
