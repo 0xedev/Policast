@@ -54,7 +54,8 @@ library PolicastLogic {
         }
 
         (uint256 maxScaled, uint256 lnSumExp) = LMSRMath.logSumExp(scaled);
-        return (b * (maxScaled + lnSumExp)) / 1e18;
+        uint256 lmsrRaw = (b * (maxScaled + lnSumExp)) / 1e18;
+        return lmsrRaw * (PAYOUT_PER_SHARE / 1e18);  // Scale by payout (×100)
     }
 
     /**
@@ -63,10 +64,8 @@ library PolicastLogic {
      * @param shares Array of share amounts for each option
      * @return LMSR cost in tokens
      */
-    function calculateLMSRCostWithShares(MarketData memory market, uint256[] memory shares)
-        internal
-        pure
-        returns (uint256)
+   function calculateLMSRCostWithShares(MarketData memory market, uint256[] memory shares)
+        internal pure returns (uint256)
     {
         if (market.optionCount == 0) return 0;
 
@@ -78,7 +77,8 @@ library PolicastLogic {
         }
 
         (uint256 maxScaled, uint256 lnSumExp) = LMSRMath.logSumExp(scaled);
-        return (b * (maxScaled + lnSumExp)) / 1e18;
+        uint256 lmsrRaw = (b * (maxScaled + lnSumExp)) / 1e18;
+        return lmsrRaw * (PAYOUT_PER_SHARE / 1e18);  // Scale by payout (×100)
     }
 
     /**

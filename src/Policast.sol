@@ -205,8 +205,10 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     mapping(uint256 => Trade[]) public marketTrades;
     mapping(uint256 => mapping(uint256 => PricePoint[])) public priceHistory; // marketId => optionId => prices
     mapping(MarketCategory => uint256[]) public categoryMarkets;
-    mapping(address => uint256) public totalWinnings;
+    mapping(address => uint256) public totalWinnings; // DEPRECATED: use userPortfolios.totalWinnings instead
     mapping(MarketType => uint256[]) public marketsByType; // Markets by type
+    // Cost basis tracking for proper PnL calculation: user => marketId => optionId => total cost basis
+    mapping(address => mapping(uint256 => mapping(uint256 => uint256))) public userCostBasis;
     address[] public allParticipants;
 
     //     // Events
@@ -371,7 +373,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         if (bytes(_question).length == 0) revert EmptyQuestion();
         if (_optionNames.length < 2 || _optionNames.length > MAX_OPTIONS) revert BadOptionCount();
         if (_optionNames.length != _optionDescriptions.length) revert LengthMismatch();
-        if (_initialLiquidity < 100 * 1e18) revert MinTokensRequired();
+        if (_initialLiquidity < 1000 * 1e18) revert MinTokensRequired();
 
         // Transfer initial liquidity from creator
         if (!bettingToken.transferFrom(msg.sender, address(this), _initialLiquidity)) revert TransferFailed();
@@ -523,11 +525,35 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         if (!market.adminLiquidityClaimed && market.adminInitialLiquidity > 0) {
             refundAmount = market.adminInitialLiquidity;
             market.adminLiquidityClaimed = true;
-
+        }
+        
+        // For free markets, also refund remaining prize pool
+        if (market.marketType == MarketType.FREE_ENTRY && market.freeConfig.remainingPrizePool > 0) {
+            refundAmount += market.freeConfig.remainingPrizePool;
+            market.freeConfig.remainingPrizePool = 0;
+            market.freeConfig.isActive = false;
+        }
+        
+        // Transfer the total refund amount if any
+        if (refundAmount > 0) {
             if (!bettingToken.transfer(market.creator, refundAmount)) revert TransferFailed();
         }
 
         emit MarketInvalidated(_marketId, msg.sender, refundAmount);
+    }
+
+    function disputeMarket(uint256 _marketId, string calldata _reason) external nonReentrant validMarket(_marketId) {
+        if (!hasRole(MARKET_VALIDATOR_ROLE, msg.sender) && msg.sender != owner()) revert NotAuthorized();
+        
+        Market storage market = markets[_marketId];
+        if (!market.resolved) revert MarketNotResolved();
+        if (market.disputed) revert MarketAlreadyResolved(); // Already disputed
+        if (market.invalidated) revert MarketIsInvalidated();
+        
+        // Set market as disputed
+        market.disputed = true;
+        
+        emit MarketDisputed(_marketId, msg.sender, _reason);
     }
 
     // Trading Functions
@@ -633,7 +659,9 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         totalPlatformFeesCollected += fee;
         totalLockedPlatformFees += fee; // lock until resolution
 
-        userPortfolios[msg.sender].totalInvested += totalCost;
+        // Update cost basis for PnL tracking
+        userCostBasis[msg.sender][_marketId][_optionId] += totalCost;
+        userPortfolios[msg.sender].totalInvested += rawCost; // Only track the actual cost, not including fees
         userPortfolios[msg.sender].tradeCount++;
         emit UserPortfolioUpdated(
             msg.sender,
@@ -666,7 +694,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
 
         // Events after successful interaction
         emit FeeAccrued(_marketId, _optionId, true, rawCost, fee);
-        emit TradeExecuted(_marketId, _optionId, msg.sender, address(0), option.currentPrice, _quantity, tradeCount++);
+        emit TradeExecuted(_marketId, _optionId, msg.sender, address(0), effectiveAvg, _quantity, tradeCount++);
         globalTradeCount++; // Track global trade count
         emit FeeCollected(_marketId, fee);
         if (_maxTotalCost != 0) {
@@ -740,8 +768,17 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
             market.userLiquidity = 0;
         }
 
+        // Calculate realized PnL based on cost basis
+        uint256 totalCostBasis = userCostBasis[msg.sender][_marketId][_optionId];
+        uint256 userShares = market.userShares[msg.sender][_optionId] + _quantity; // original shares before sale
+        uint256 avgCostBasis = userShares > 0 ? totalCostBasis / userShares : 0; // average cost per share
+        uint256 soldCostBasis = avgCostBasis * _quantity; // cost basis for sold shares
+        
+        // Update cost basis tracking
+        userCostBasis[msg.sender][_marketId][_optionId] = totalCostBasis > soldCostBasis ? totalCostBasis - soldCostBasis : 0;
+        
         userPortfolios[msg.sender].tradeCount++;
-        userPortfolios[msg.sender].realizedPnL += int256(netRefund);
+        userPortfolios[msg.sender].realizedPnL += int256(netRefund) - int256(soldCostBasis);
         emit UserPortfolioUpdated(
             msg.sender,
             userPortfolios[msg.sender].totalInvested,
@@ -786,6 +823,9 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     function resolveMarket(uint256 _marketId, uint256 _winningOptionId) external nonReentrant validMarket(_marketId) {
         if (msg.sender != owner() && !hasRole(QUESTION_RESOLVE_ROLE, msg.sender)) revert NotAuthorized();
         Market storage market = markets[_marketId];
+        
+        // Require market validation before resolution
+        if (!market.validated) revert MarketNotValidated();
 
         // NEW: Allow early resolution for event-based markets
         if (!market.earlyResolutionAllowed && block.timestamp < market.endTime) {
@@ -866,8 +906,16 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
 
         // Effects: Update all state before external call
         market.hasClaimed[msg.sender] = true;
+        
+        // Calculate realized PnL from winnings vs cost basis
+        uint256 costBasis = userCostBasis[msg.sender][_marketId][market.winningOptionId];
+        userCostBasis[msg.sender][_marketId][market.winningOptionId] = 0; // Clear cost basis as position is closed
+        
         userPortfolios[msg.sender].totalWinnings += winnings;
-        totalWinnings[msg.sender] += winnings;
+        userPortfolios[msg.sender].realizedPnL += int256(winnings) - int256(costBasis);
+        // NOTE: The standalone totalWinnings[msg.sender] mapping is deprecated.
+        // We keep the mapping for backwards compatibility but no longer update it to avoid
+        // redundancy and potential desync. Use userPortfolios[user].totalWinnings instead.
         emit UserPortfolioUpdated(
             msg.sender,
             userPortfolios[msg.sender].totalInvested,
@@ -1156,6 +1204,41 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         Market storage market = markets[_marketId];
         require(_optionId < market.optionCount, "Invalid option ID");
         return market.userShares[_user][_optionId];
+    }
+
+    // NEW: Calculate user's unrealized PnL across all positions
+    function calculateUnrealizedPnL(address _user) external view returns (int256) {
+        int256 totalUnrealized = 0;
+        
+        // Iterate through all markets to find user's positions
+        for (uint256 marketId = 1; marketId <= marketCount; marketId++) {
+            Market storage market = markets[marketId];
+            if (market.invalidated) continue;
+            
+            for (uint256 optionId = 0; optionId < market.optionCount; optionId++) {
+                uint256 userShares = market.userShares[_user][optionId];
+                if (userShares == 0) continue;
+                
+                uint256 costBasis = userCostBasis[_user][marketId][optionId];
+                uint256 currentValue;
+                
+                if (market.resolved) {
+                    // For resolved markets, use payout value
+                    if (market.winningOptionId == optionId) {
+                        currentValue = userShares * PAYOUT_PER_SHARE / 1e18;
+                    } else {
+                        currentValue = 0; // Losing positions worth nothing
+                    }
+                } else {
+                    // For unresolved markets, use current market price
+                    currentValue = userShares * market.options[optionId].currentPrice / 1e18;
+                }
+                
+                totalUnrealized += int256(currentValue) - int256(costBasis);
+            }
+        }
+        
+        return totalUnrealized;
     }
 
     // NEW: Additional getters for PolicastViews contract

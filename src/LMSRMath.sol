@@ -48,16 +48,18 @@ library LMSRMath {
         // Natural log for y in (0, +inf). 1e18 scaling. Uses range reduction to (1,2]
         // then atanh series: ln(y) = 2*( z + z^3/3 + z^5/5 + z^7/7 + z^9/9 ), z=(y-1)/(y+1)
         require(y > 0, "LN_ZERO");
-        uint256 result = 0;
+        require(y >= 1e18, "UnsupportedRange"); // Prevent issues with y < 1
+        
+        int256 result = 0;
         // Range reduce by powers of two to bring y into (0.5, 2]
         while (y >= 2e18) {
             y = y / 2;
-            result += _LN2;
+            result += int256(_LN2);
         }
         while (y <= 5e17) {
             // <0.5
             y = y * 2;
-            result -= _LN2;
+            result -= int256(_LN2);
         }
         // Now y in (0.5,2]; use series centered at 1
         // z = (y-1)/(y+1)
@@ -77,21 +79,22 @@ library LMSRMath {
         series += z7 / 7;
         series += z9 / 9;
         uint256 core = (series * 2); // multiply by 2 (still 1e18 scaled)
-        // Adjust sign: if y < 1 then ln(y) = -core
+        
+        // Combine with accumulated powers-of-two adjustments using signed arithmetic
         if (sign == 0) {
-            core = core > 0 ? (uint256(0) - core) : 0; // underflow prevention not needed due to sign logic, kept for safety
+            // y < 1, so ln(y) < 0
+            result -= int256(core);
+        } else {
+            // y >= 1, so ln(y) >= 0
+            result += int256(core);
         }
-        // Combine with accumulated powers-of-two adjustments
-        if (sign == 0) {
-            // result currently may be negative due to subtractions; treat result as signed in int256 domain
-            // Convert result (uint256) + negative core by using assembly to allow signed arithmetic safely.
-            // Simpler: use int256
-            int256 signedResult = int256(result);
-            signedResult -= int256(core);
-            if (signedResult < 0) return uint256(signedResult * -1); // fallback; (in practice y<1 implies negative ln but callers use only inside log-sum-exp with positive shift)
+        
+        // Convert back to uint256, handling negative results appropriately
+        if (result < 0) {
+            // This should not happen in practice since we require y >= 1e18
+            revert("NegativeLnResult");
         }
-        // For y>=1, ln is positive: result + core
-        return result + core;
+        return uint256(result);
     }
 
     function logSumExp(uint256[] memory scaled) internal pure returns (uint256 maxScaled, uint256 lnSumExp) {
@@ -123,42 +126,62 @@ library LMSRMath {
         pure
         returns (uint256)
     {
+        // Checks first (CEI pattern)
         if (_optionCount < 2) revert("BadOptionCount");
+        if (_initialLiquidity == 0) revert("ZeroLiquidity");
+        if (payoutPerShare == 0) revert("ZeroPayoutPerShare");
+        
+        // Fixed b values based on option count for optimal price stability (25-30 range)
+        uint256 b;
         uint256 lnN;
-        if (_optionCount == 2) lnN = 693147180559945309; // ln(2)
-
-        else if (_optionCount == 3) lnN = 1098612288668109692; // ln(3)
-
-        else if (_optionCount == 4) lnN = 1386294361119890614; // ln(4)
-
-        else if (_optionCount == 5) lnN = 1609437912434100375; // ln(5)
-
-        else if (_optionCount == 6) lnN = 1791759469228055172; // ln(6)
-
-        else if (_optionCount == 7) lnN = 1945932330622312828; // ln(7)
-
-        else if (_optionCount == 8) lnN = 2079441541679835928; // ln(8)
-
-        else if (_optionCount == 9) lnN = 2197224577336213040; // ln(9)
-
-        else if (_optionCount == 10) lnN = 2302585092994045684; // ln(10)
-
-        else revert("BadOptionCount");
-
-        uint256 LMSR_COVERAGE_RATIO_NUM = 60;
-        uint256 LMSR_COVERAGE_RATIO_DEN = 100;
-        uint256 MIN_LMSR_B = 1e16;
-        uint256 MAX_LMSR_B = 1e24;
-
-        uint256 denominatorD = (lnN * payoutPerShare) / 1e18; // scaled 1e18
-        uint256 targetWorstCase = (_initialLiquidity * LMSR_COVERAGE_RATIO_NUM) / LMSR_COVERAGE_RATIO_DEN;
-        uint256 b = (targetWorstCase * 1e18) / denominatorD;
-
-        if (b < MIN_LMSR_B) b = MIN_LMSR_B;
-        if (b > MAX_LMSR_B) b = MAX_LMSR_B;
-
-        uint256 worstCaseLoss = ((b * lnN) / 1e18) * payoutPerShare / 1e18;
-        if (_initialLiquidity < worstCaseLoss) revert("InsufficientInitialLiquidity");
+        
+        if (_optionCount == 2) {
+            b = 30e18;
+            lnN = 693147180559945309; // ln(2)
+        } else if (_optionCount == 3) {
+            b = 29e18;
+            lnN = 1098612288668109692; // ln(3)
+        } else if (_optionCount == 4) {
+            b = 28e18;
+            lnN = 1386294361119890614; // ln(4)
+        } else if (_optionCount == 5) {
+            b = 27e18;
+            lnN = 1609437912434100375; // ln(5)
+        } else if (_optionCount == 6) {
+            b = 26e18;
+            lnN = 1791759469228055172; // ln(6)
+        } else if (_optionCount == 7) {
+            b = 26e18;
+            lnN = 1945932330622312828; // ln(7)
+        } else if (_optionCount == 8) {
+            b = 25e18;
+            lnN = 2079441541679835928; // ln(8)
+        } else if (_optionCount == 9) {
+            b = 25e18;
+            lnN = 2197224577336213040; // ln(9)
+        } else if (_optionCount == 10) {
+            b = 25e18;
+            lnN = 2302585092994045684; // ln(10)
+        } else {
+            revert("UnsupportedOptionCount");
+        }
+        
+        // Effects: Calculate worst case loss using conservative approximation
+        // This represents the maximum loss when all volume goes to one outcome
+        // Formula: worst_case_loss = b * ln(n) * payoutPerShare
+        // This is derived from the LMSR cost function maximum differential
+        uint256 worstCaseLoss;
+        unchecked {
+            // Safe math: all values are bounded and checked above
+            uint256 bTimesLn = (b * lnN) / 1e18;
+            worstCaseLoss = (bTimesLn * payoutPerShare) / 1e18;
+        }
+        
+        // Final validation: ensure liquidity can cover worst case
+        if (_initialLiquidity < worstCaseLoss) {
+            revert("InsufficientInitialLiquidity");
+        }
+        
         return b;
     }
 }
