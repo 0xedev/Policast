@@ -175,7 +175,7 @@ contract MultipleTradesTest is Test {
         _logTrade(mId, 0, address(0), "INITIAL", 0, 0);
 
         uint256 step = 1;
-        uint256 baseQty = 1e16; // 0.01 ether starting quantity
+        uint256 baseQty = 1e18; // 1 whole share starting quantity
 
         // Round 1: Multiple traders buy Option A
         console.log("\n--- Round 1: Multiple traders buy Option A ---");
@@ -234,12 +234,12 @@ contract MultipleTradesTest is Test {
         
         console.log("Final Price A:", finalPriceA);
         console.log("Final Price B:", finalPriceB);
-        console.log("Price A change from 50 ETH:", int256(finalPriceA) - 50e18);
-        console.log("Price B change from 50 ETH:", int256(finalPriceB) - 50e18);
+        console.log("Price A change from initial 50%:", int256(finalPriceA) - 5e17);
+        console.log("Price B change from initial 50%:", int256(finalPriceB) - 5e17);
         
-        // Verify prices sum to ~100 ETH (allowing for small rounding)
+        // Verify prices sum to ~1e18 (100%) after removing 100x scaling
         uint256 totalPrice = finalPriceA + finalPriceB;
-        assertApproxEqRel(totalPrice, 100e18, 1e15, "Prices should sum to ~100 ETH"); // 0.1% tolerance
+        assertApproxEqRel(totalPrice, 1e18, 1e15, "Prices should sum to ~1e18 (100%)"); // 0.1% tolerance
         
         // Verify both prices are positive
         assertGt(finalPriceA, 0, "Price A should be positive");
@@ -279,7 +279,7 @@ contract MultipleTradesTest is Test {
         console.log("LMSR b parameter:", market.getMarketLMSRB(mId));
 
         uint256 step = 1;
-        uint256 baseQty = 5e16; // 0.05 ether
+        uint256 baseQty = 5e18; // 5 whole shares
 
         // Initial state
         _logTrade(mId, 0, address(0), "INITIAL", 0, 0);
@@ -321,10 +321,10 @@ contract MultipleTradesTest is Test {
         console.log("Final YES Price:", finalPriceYES);
         console.log("Final NO Price:", finalPriceNO);
         
-        // Verify market integrity
+        // Verify market integrity - prices should sum to ~1e18 (100%) after removing 100x scaling
         assertGt(finalPriceYES, 0, "YES price should be positive");
         assertGt(finalPriceNO, 0, "NO price should be positive");
-        assertApproxEqRel(finalPriceYES + finalPriceNO, 100e18, 1e15, "Prices should sum to ~100");
+        assertApproxEqRel(finalPriceYES + finalPriceNO, 1e18, 1e15, "Prices should sum to ~1e18 (100%)");
         
         console.log("Back and forth test completed!");
     }

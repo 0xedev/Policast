@@ -396,8 +396,8 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         market.adminInitialLiquidity = _initialLiquidity;
         market.userLiquidity = 0; // No user liquidity yet
 
-        // Initialize options with equal starting prices
-        uint256 initialPrice = PAYOUT_PER_SHARE / _optionNames.length; // Equal price distribution
+        // Initialize options with equal starting prices (1.0 tokens total, split equally) - createMarket
+        uint256 initialPrice = 1e18 / _optionNames.length; // Equal price distribution
 
         for (uint256 i = 0; i < _optionNames.length; i++) {
             market.options[i] = MarketOption({
@@ -467,8 +467,8 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         market.adminInitialLiquidity = _initialLiquidity;
         market.userLiquidity = 0; // No user liquidity yet
 
-        // Initialize options with equal starting prices
-        uint256 initialPrice = PAYOUT_PER_SHARE / _optionNames.length; // Equal price distribution
+        // Initialize options with equal starting prices (1.0 tokens total, split equally) - createFreeMarket  
+        uint256 initialPrice = 1e18 / _optionNames.length; // Equal price distribution
 
         for (uint256 i = 0; i < _optionNames.length; i++) {
             market.options[i] = MarketOption({
@@ -622,16 +622,10 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
 
         Market storage market = markets[_marketId];
         MarketOption storage option = market.options[_optionId];
-        uint256 costBefore = _lmsrCost(_marketId);
-        uint256 optionCount = market.optionCount;
-        uint256[] memory sharesAfter = new uint256[](optionCount);
-        for (uint256 i = 0; i < optionCount; i++) {
-            sharesAfter[i] = market.options[i].totalShares;
-        }
-        sharesAfter[_optionId] += _quantity;
-        uint256 costAfter = _lmsrCostGivenShares(_marketId, sharesAfter);
-        if (costAfter < costBefore) revert InconsistentCostInvariant();
-        uint256 rawCost = costAfter - costBefore;
+        
+        // Use option-specific pricing instead of cost difference approach
+        // Price = current option price * quantity (like RT.sol does)
+        uint256 rawCost = (option.currentPrice * _quantity) / 1e18;
         if (rawCost == 0) revert PriceTooLow();
 
         uint256 fee = (rawCost * platformFeeRate) / 10000;
@@ -725,16 +719,10 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
 
         Market storage market = markets[_marketId];
         MarketOption storage option = market.options[_optionId];
-        uint256 costBefore = _lmsrCost(_marketId);
-        uint256 optionCount = market.optionCount;
-        uint256[] memory sharesAfter = new uint256[](optionCount);
-        for (uint256 i = 0; i < optionCount; i++) {
-            sharesAfter[i] = market.options[i].totalShares;
-        }
-        sharesAfter[_optionId] -= _quantity; // safe due to check above
-        uint256 costAfter = _lmsrCostGivenShares(_marketId, sharesAfter);
-        if (costBefore < costAfter) revert InconsistentCostInvariant();
-        uint256 rawRefund = costBefore - costAfter;
+        
+        // Use option-specific pricing instead of cost difference approach
+        // Refund = current option price * quantity (consistent with buy logic)
+        uint256 rawRefund = (option.currentPrice * _quantity) / 1e18;
         if (rawRefund == 0) revert PriceTooLow();
         uint256 fee = (rawRefund * platformFeeRate) / 10000;
         uint256 netRefund = rawRefund - fee;
@@ -937,19 +925,10 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         view
         returns (uint256)
     {
-        // Use LMSR to calculate sell price
+        // Use option-specific pricing consistent with new approach
         Market storage market = markets[_marketId];
-        uint256 costBefore = _lmsrCost(_marketId);
-        uint256 optionCount = market.optionCount;
-        uint256[] memory sharesAfter = new uint256[](optionCount);
-        for (uint256 i = 0; i < optionCount; i++) {
-            sharesAfter[i] = market.options[i].totalShares;
-        }
-        if (sharesAfter[_optionId] < _quantity) return 0; // Insufficient shares
-        sharesAfter[_optionId] -= _quantity;
-        uint256 costAfter = _lmsrCostGivenShares(_marketId, sharesAfter);
-        if (costBefore <= costAfter) return 0; // Should not happen
-        uint256 rawRefund = costBefore - costAfter;
+        MarketOption storage option = market.options[_optionId];
+        uint256 rawRefund = (option.currentPrice * _quantity) / 1e18;
         uint256 fee = (rawRefund * platformFeeRate) / 10000;
         return rawRefund - fee; // Net proceeds
     }
