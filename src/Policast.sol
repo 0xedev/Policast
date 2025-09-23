@@ -267,6 +267,8 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     event FeeAccrued(uint256 indexed marketId, uint256 indexed optionId, bool isBuy, uint256 rawAmount, uint256 fee);
     // NEW enhanced analytics events
     event PricesUpdated(uint256 indexed marketId, uint256[] prices);
+    // New: Emit token-denominated prices (probability * PAYOUT_PER_SHARE)
+    event TokenPricesUpdated(uint256 indexed marketId, uint256[] tokenPrices);
     event SlippageProtect(
         uint256 indexed marketId,
         uint256 indexed optionId,
@@ -625,9 +627,12 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         Market storage market = markets[_marketId];
         MarketOption storage option = market.options[_optionId];
         
-        // Use option-specific pricing with 1:100 share-to-token ratio
-        // 1 share costs 100x the probability price in tokens
-        uint256 rawCost = (option.currentPrice * _quantity * 100) / 1e18;
+    // Use option-specific pricing scaled by payout per share (token base units)
+    // 1 share costs probability * PAYOUT_PER_SHARE tokens
+    // Units: currentPrice (1e18) * PAYOUT_PER_SHARE (1e18) / 1e18 -> tokens (1e18)
+    // Compute (prob * qty) first to keep precision, then scale by payout
+    uint256 probTimesQty = (option.currentPrice * _quantity) / 1e18; // still 1e18-scaled
+    uint256 rawCost = (probTimesQty * PAYOUT_PER_SHARE) / 1e18; // tokens
         if (rawCost == 0) revert PriceTooLow();
 
         uint256 fee = (rawCost * platformFeeRate) / 10000;
@@ -722,9 +727,10 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         Market storage market = markets[_marketId];
         MarketOption storage option = market.options[_optionId];
         
-        // Use option-specific pricing with 1:100 share-to-token ratio
-        // 1 share refunds 100x the probability price in tokens
-        uint256 rawRefund = (option.currentPrice * _quantity * 100) / 1e18;
+    // Use option-specific pricing scaled by payout per share (token base units)
+    // 1 share refunds probability * PAYOUT_PER_SHARE tokens
+    uint256 probTimesQty = (option.currentPrice * _quantity) / 1e18;
+    uint256 rawRefund = (probTimesQty * PAYOUT_PER_SHARE) / 1e18;
         if (rawRefund == 0) revert PriceTooLow();
         uint256 fee = (rawRefund * platformFeeRate) / 10000;
         uint256 netRefund = rawRefund - fee;
@@ -881,10 +887,11 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         if (market.invalidated) revert MarketIsInvalidated();
         if (market.hasClaimed[msg.sender]) revert AlreadyClaimed();
 
-        uint256 userWinningShares = market.userShares[msg.sender][market.winningOptionId];
-        if (userWinningShares == 0) revert NoWinningShares();
-        // Fixed payout per winning share (Polymarket-style)
-        uint256 winnings = userWinningShares * PAYOUT_PER_SHARE;
+    uint256 userWinningShares = market.userShares[msg.sender][market.winningOptionId];
+    if (userWinningShares == 0) revert NoWinningShares();
+    // Fixed payout per winning share (Polymarket-style)
+    // Units: userWinningShares (1e18) * PAYOUT_PER_SHARE (1e18) / 1e18 -> tokens (1e18)
+    uint256 winnings = (userWinningShares * PAYOUT_PER_SHARE) / 1e18;
 
         // Effects: Update all state before external call
         market.hasClaimed[msg.sender] = true;
@@ -912,19 +919,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
 
         // Events after successful interaction
         emit Claimed(_marketId, msg.sender, winnings);
-    }
-
-    function calculateSellPrice(uint256 _marketId, uint256 _optionId, uint256 _quantity)
-        public
-        view
-        returns (uint256)
-    {
-        // Use option-specific pricing consistent with new approach
-        Market storage market = markets[_marketId];
-        MarketOption storage option = market.options[_optionId];
-        uint256 rawRefund = (option.currentPrice * _quantity) / 1e18;
-        uint256 fee = (rawRefund * platformFeeRate) / 10000;
-        return rawRefund - fee; // Net proceeds
     }
 
     // Get current market odds for all options
@@ -1117,6 +1111,12 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         }
 
         emit PricesUpdated(_marketId, prices);
+        // Also emit token-denominated prices for convenience
+        uint256[] memory tokenPrices = new uint256[](market.optionCount);
+        for (uint256 i = 0; i < market.optionCount; i++) {
+            tokenPrices[i] = (prices[i] * PAYOUT_PER_SHARE) / 1e18;
+        }
+        emit TokenPricesUpdated(_marketId, tokenPrices);
     }
 
     function _computeB(uint256 _initialLiquidity, uint256 _optionCount) internal pure returns (uint256) {
@@ -1244,19 +1244,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         Market storage market = markets[_marketId];
         require(_optionId < market.optionCount, "Invalid option ID");
         return market.userShares[_user][_optionId];
-    }
-
-    // NEW: Additional getters for PolicastViews contract
-    function getTotalFeesCollected() external view returns (uint256) {
-        return totalPlatformFeesCollected;
-    }
-
-    function getFeeCollector() external view returns (address) {
-        return feeCollector;
-    }
-
-    function getGlobalTradeCount() external view returns (uint256) {
-        return globalTradeCount;
     }
 
     function getMarketLMSRB(uint256 _marketId) external view validMarket(_marketId) returns (uint256) {

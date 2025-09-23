@@ -5,6 +5,7 @@ import "./Policast.sol";
 
 contract PolicastViews {
     PolicastMarketV3 public immutable policast;
+    uint256 private constant PAYOUT_PER_SHARE = 100 * 1e18; // Match the main contract constant
 
     constructor(address _policast) {
         policast = PolicastMarketV3(_policast);
@@ -428,10 +429,10 @@ contract PolicastViews {
     {
         // Return actual platform stats using main contract data
         return (
-            policast.getTotalFeesCollected(),
-            policast.getFeeCollector(), 
+            policast.totalPlatformFeesCollected(),
+            policast.feeCollector(), 
             policast.marketCount(),
-            policast.getGlobalTradeCount()
+            policast.globalTradeCount()
         );
     }
 
@@ -562,7 +563,6 @@ contract PolicastViews {
         
         (, , , , uint256 optionCount, , , , ) = policast.getMarketBasicInfo(_marketId);
         uint256[] memory odds = new uint256[](optionCount);
-        uint256 PAYOUT_PER_SHARE = 100 * 1e18; // Match the main contract constant
         
         for (uint256 i = 0; i < optionCount; i++) {
             uint256 price = this.calculateCurrentPrice(_marketId, i);
@@ -574,6 +574,47 @@ contract PolicastViews {
             }
         }
         return odds;
+    }
+
+    // New: Get option price in tokens per share (probability * PAYOUT_PER_SHARE)
+    // New: Get option price in tokens per share (probability * PAYOUT_PER_SHARE) - moved from main contract
+    function getOptionPriceInTokens(uint256 _marketId, uint256 _optionId) external view returns (uint256) {
+        (,, , , uint256 currentPrice, bool isActive) = policast.getMarketOption(_marketId, _optionId);
+        require(isActive, "Option inactive");
+        return (currentPrice * PAYOUT_PER_SHARE) / 1e18;
+    }
+
+    // New: Get all current option prices in tokens per share - moved from main contract  
+    function getMarketPricesInTokens(uint256 _marketId) external view returns (uint256[] memory) {
+        (,,,, uint256 optionCount,,,,) = policast.getMarketBasicInfo(_marketId);
+        uint256[] memory prices = new uint256[](optionCount);
+        for (uint256 i = 0; i < optionCount; i++) {
+            (,, , , uint256 currentPrice, bool isActive) = policast.getMarketOption(_marketId, i);
+            if (isActive) {
+                prices[i] = (currentPrice * PAYOUT_PER_SHARE) / 1e18;
+            }
+        }
+        return prices;
+    }
+
+    // Additional getters moved from main contract to reduce size
+    function getTotalFeesCollected() external view returns (uint256) {
+        return policast.totalPlatformFeesCollected();
+    }
+
+    function getFeeCollector() external view returns (address) {
+        return policast.feeCollector();
+    }
+
+    function getGlobalTradeCount() external view returns (uint256) {
+        return policast.globalTradeCount();
+    }
+
+    function calculateCurrentPriceInTokens(uint256 _marketId, uint256 _optionId) external view returns (uint256) {
+        // Calculate price directly to avoid circular dependency
+        (,, , , uint256 currentPrice, bool isActive) = policast.getMarketOption(_marketId, _optionId);
+        require(isActive, "Option inactive");
+        return (currentPrice * PAYOUT_PER_SHARE) / 1e18;
     }
 
     // Calculate user's unrealized PnL across all positions
@@ -617,5 +658,25 @@ contract PolicastViews {
         }
         
         return totalUnrealized;
+    }
+
+    // Moved from main contract to reduce size
+    function calculateSellPrice(uint256 _marketId, uint256 _optionId, uint256 _quantity)
+        external
+        view
+        returns (uint256)
+    {
+        // Get market option data from main contract
+        (,, , , uint256 currentPrice, bool isActive) = 
+            policast.getMarketOption(_marketId, _optionId);
+        
+        require(isActive, "Option inactive");
+        
+        // Use option-specific pricing consistent with new approach
+        // Convert probability price to token price using payout per share
+        uint256 probTimesQty = (currentPrice * _quantity) / 1e18; // still 1e18-scaled
+        uint256 rawRefund = (probTimesQty * PAYOUT_PER_SHARE) / 1e18; // tokens
+        uint256 fee = (rawRefund * policast.platformFeeRate()) / 10000;
+        return rawRefund - fee; // Net proceeds
     }
 }
