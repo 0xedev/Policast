@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "./Policast.sol";
+import "./PolicastLogic.sol";
 
 contract PolicastViews {
     PolicastMarketV3 public immutable policast;
@@ -661,22 +662,129 @@ contract PolicastViews {
     }
 
     // Moved from main contract to reduce size
+    // function calculateSellPrice(uint256 _marketId, uint256 _optionId, uint256 _quantity)
+    //     external
+    //     view
+    //     returns (uint256)
+    // {
+    //     // Get market option data from main contract
+    //     (,, , , uint256 currentPrice, bool isActive) = 
+    //         policast.getMarketOption(_marketId, _optionId);
+        
+    //     require(isActive, "Option inactive");
+        
+    //     // Use option-specific pricing consistent with new approach
+    //     // Convert probability price to token price using payout per share
+    //     uint256 probTimesQty = (currentPrice * _quantity) / 1e18; // still 1e18-scaled
+    //     uint256 rawRefund = (probTimesQty * PAYOUT_PER_SHARE) / 1e18; // tokens
+    //     uint256 fee = (rawRefund * policast.platformFeeRate()) / 10000;
+    //     return rawRefund - fee; // Net proceeds
+    // }
+
+    // Quote buy cost using LMSR ΔC (includes fee)
+    function quoteBuy(uint256 _marketId, uint256 _optionId, uint256 _quantity)
+        external
+        view
+        returns (uint256 rawCost, uint256 fee, uint256 totalCost, uint256 avgPricePerShare)
+    {
+        require(_marketId < policast.marketCount(), "Market does not exist");
+        require(_quantity > 0, "AmountMustBePositive");
+
+        // Gather market data
+        (
+            , , , , uint256 optionCount, , , , 
+        ) = policast.getMarketBasicInfo(_marketId);
+        uint256 b = policast.getMarketLMSRB(_marketId);
+
+        // Before shares
+        uint256[] memory sharesBefore = new uint256[](optionCount);
+        for (uint256 i = 0; i < optionCount; i++) {
+            (,, uint256 ts,,,) = policast.getMarketOption(_marketId, i);
+            sharesBefore[i] = ts;
+        }
+
+        // After shares
+        uint256[] memory sharesAfter = new uint256[](optionCount);
+        for (uint256 i = 0; i < optionCount; i++) {
+            sharesAfter[i] = sharesBefore[i];
+        }
+        sharesAfter[_optionId] += _quantity;
+
+        // Build MarketData and compute ΔC
+        PolicastLogic.MarketData memory m = PolicastLogic.MarketData({
+            optionCount: optionCount,
+            lmsrB: b,
+            maxOptionShares: 0,
+            userLiquidity: 0,
+            adminInitialLiquidity: 0
+        });
+
+        uint256 costBefore = PolicastLogic.calculateLMSRCostWithShares(m, sharesBefore);
+        uint256 costAfter  = PolicastLogic.calculateLMSRCostWithShares(m, sharesAfter);
+        rawCost = costAfter - costBefore;
+
+        uint256 feeRate = policast.platformFeeRate(); // bps
+        fee = (rawCost * feeRate) / 10000;
+        totalCost = rawCost + fee;
+
+        // Average execution price per share (includes fee)
+        avgPricePerShare = (totalCost * 1e18) / _quantity;
+    }
+
+    // Quote sell proceeds using LMSR ΔC (includes fee)
+    function quoteSell(uint256 _marketId, uint256 _optionId, uint256 _quantity)
+        external
+        view
+        returns (uint256 rawRefund, uint256 fee, uint256 netRefund, uint256 avgPricePerShare)
+    {
+        require(_marketId < policast.marketCount(), "Market does not exist");
+        require(_quantity > 0, "AmountMustBePositive");
+
+        (
+            , , , , uint256 optionCount, , , , 
+        ) = policast.getMarketBasicInfo(_marketId);
+        uint256 b = policast.getMarketLMSRB(_marketId);
+
+        uint256[] memory sharesBefore = new uint256[](optionCount);
+        for (uint256 i = 0; i < optionCount; i++) {
+            (,, uint256 ts,,,) = policast.getMarketOption(_marketId, i);
+            sharesBefore[i] = ts;
+        }
+        require(sharesBefore[_optionId] >= _quantity, "InsufficientShares");
+
+        uint256[] memory sharesAfter = new uint256[](optionCount);
+        for (uint256 i = 0; i < optionCount; i++) {
+            sharesAfter[i] = sharesBefore[i];
+        }
+        sharesAfter[_optionId] -= _quantity;
+
+        PolicastLogic.MarketData memory m = PolicastLogic.MarketData({
+            optionCount: optionCount,
+            lmsrB: b,
+            maxOptionShares: 0,
+            userLiquidity: 0,
+            adminInitialLiquidity: 0
+        });
+
+        uint256 costBefore = PolicastLogic.calculateLMSRCostWithShares(m, sharesBefore);
+        uint256 costAfter  = PolicastLogic.calculateLMSRCostWithShares(m, sharesAfter);
+        rawRefund = costBefore - costAfter;
+
+        uint256 feeRate = policast.platformFeeRate();
+        fee = (rawRefund * feeRate) / 10000;
+        netRefund = rawRefund - fee;
+
+        // Average execution price per share (includes fee)
+        avgPricePerShare = (netRefund * 1e18) / _quantity;
+    }
+
+    // Replace linear approximation with LMSR ΔC for sells
     function calculateSellPrice(uint256 _marketId, uint256 _optionId, uint256 _quantity)
         external
         view
         returns (uint256)
     {
-        // Get market option data from main contract
-        (,, , , uint256 currentPrice, bool isActive) = 
-            policast.getMarketOption(_marketId, _optionId);
-        
-        require(isActive, "Option inactive");
-        
-        // Use option-specific pricing consistent with new approach
-        // Convert probability price to token price using payout per share
-        uint256 probTimesQty = (currentPrice * _quantity) / 1e18; // still 1e18-scaled
-        uint256 rawRefund = (probTimesQty * PAYOUT_PER_SHARE) / 1e18; // tokens
-        uint256 fee = (rawRefund * policast.platformFeeRate()) / 10000;
-        return rawRefund - fee; // Net proceeds
+        (, , uint256 netRefund, ) = this.quoteSell(_marketId, _optionId, _quantity);
+        return netRefund;
     }
 }

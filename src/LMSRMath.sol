@@ -11,10 +11,14 @@ library LMSRMath {
     uint256 private constant _MAX_DIFF = 80e18; // beyond this exp(-x) is < ~1e-35 -> negligible
 
     function expNeg(uint256 x) internal pure returns (uint256) {
-        // Returns exp(-x) for x>=0 using 7-term alternating series.
-        // exp(-x) = 1 - x + x^2/2 - x^3/6 + x^4/24 - x^5/120 + x^6/720 - x^7/5040
+        // Returns exp(-x) for x>=0 using alternating series with signed accumulation.
+        // exp(-x) ≈ 1 - x + x^2/2 - x^3/6 + x^4/24 - x^5/120 + x^6/720 - x^7/5040 + ...
+        // All terms use 1e18 fixed-point scaling. This implementation preserves monotonicity
+        // for the domain we use in LMSR (diffs typically in [0, ~2]).
         if (x == 0) return 1e18;
-        if (x >= _MAX_DIFF) return 0; // negligible
+        if (x >= _MAX_DIFF) return 0; // negligible for our purposes
+
+        // Precompute powers: x, x^2, x^3, ... with scaling at each step
         uint256 x1 = x; // x
         uint256 x2 = (x1 * x1) / 1e18; // x^2
         uint256 x3 = (x2 * x1) / 1e18; // x^3
@@ -23,25 +27,18 @@ library LMSRMath {
         uint256 x6 = (x5 * x1) / 1e18; // x^6
         uint256 x7 = (x6 * x1) / 1e18; // x^7
 
-        uint256 result = 1e18; // 1
-        // - x
-        result = x1 > result ? 0 : result - x1;
-        // + x^2/2
-        result += x2 / 2;
-        // - x^3/6
-        uint256 t = x3 / 6;
-        result = result > t ? result - t : 0;
-        // + x^4/24
-        result += x4 / 24;
-        // - x^5/120
-        t = x5 / 120;
-        result = result > t ? result - t : 0;
-        // + x^6/720
-        result += x6 / 720;
-        // - x^7/5040
-        t = x7 / 5040;
-        result = result > t ? result - t : 0;
-        return result;
+        // Use signed accumulator to avoid clamping errors when x > 1e18
+        int256 acc = int256(1e18);
+        acc -= int256(x1);                 // - x
+        acc += int256(x2) / 2;             // + x^2/2
+        acc -= int256(x3) / 6;             // - x^3/6
+        acc += int256(x4) / 24;            // + x^4/24
+        acc -= int256(x5) / 120;           // - x^5/120
+        acc += int256(x6) / 720;           // + x^6/720
+        acc -= int256(x7) / 5040;          // - x^7/5040
+
+        if (acc <= 0) return 0; // underflow to ~0
+        return uint256(acc);
     }
 
     function ln(uint256 y) internal pure returns (uint256) {

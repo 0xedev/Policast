@@ -377,7 +377,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         if (bytes(_question).length == 0) revert EmptyQuestion();
         if (_optionNames.length < 2 || _optionNames.length > MAX_OPTIONS) revert BadOptionCount();
         if (_optionNames.length != _optionDescriptions.length) revert LengthMismatch();
-        if (_initialLiquidity < 1000 * 1e18) revert MinTokensRequired();
+        if (_initialLiquidity < 100 * 1e18) revert MinTokensRequired();
 
         // Transfer initial liquidity from creator
         if (!bettingToken.transferFrom(msg.sender, address(this), _initialLiquidity)) revert TransferFailed();
@@ -619,7 +619,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         validOption(_marketId, _optionId)
     {
         if (_quantity == 0) revert AmountMustBePositive();
-        if (!markets[_marketId].validated) revert MarketNotValidated();
         // Add overflow protection
         if (_quantity > type(uint128).max) revert InvalidInput();
         // Note: No artificial cap on _maxPricePerShare - users can set their own risk tolerance
@@ -627,12 +626,17 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         Market storage market = markets[_marketId];
         MarketOption storage option = market.options[_optionId];
         
-    // Use option-specific pricing scaled by payout per share (token base units)
-    // 1 share costs probability * PAYOUT_PER_SHARE tokens
-    // Units: currentPrice (1e18) * PAYOUT_PER_SHARE (1e18) / 1e18 -> tokens (1e18)
-    // Compute (prob * qty) first to keep precision, then scale by payout
-    uint256 probTimesQty = (option.currentPrice * _quantity) / 1e18; // still 1e18-scaled
-    uint256 rawCost = (probTimesQty * PAYOUT_PER_SHARE) / 1e18; // tokens
+        uint256 costBefore = _lmsrCost(_marketId);
+        
+        // Temporarily update shares to calculate cost after
+        option.totalShares += _quantity;
+        
+        uint256 costAfter = _lmsrCost(_marketId);
+
+        // Revert state change, as it will be done again below
+        option.totalShares -= _quantity;
+
+        uint256 rawCost = costAfter - costBefore;
         if (rawCost == 0) revert PriceTooLow();
 
         uint256 fee = (rawCost * platformFeeRate) / 10000;
@@ -698,9 +702,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         emit TradeExecuted(_marketId, _optionId, msg.sender, address(0), effectiveAvg, _quantity, tradeCount++);
         globalTradeCount++; // Track global trade count
         emit FeeCollected(_marketId, fee);
-        if (_maxTotalCost != 0) {
-            emit SlippageProtect(_marketId, _optionId, true, _quantity, _maxTotalCost, totalCost);
-        }
     }
 
     // Backward-compatible wrapper (deprecated): aggregate bound ignored
@@ -727,10 +728,17 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         Market storage market = markets[_marketId];
         MarketOption storage option = market.options[_optionId];
         
-    // Use option-specific pricing scaled by payout per share (token base units)
-    // 1 share refunds probability * PAYOUT_PER_SHARE tokens
-    uint256 probTimesQty = (option.currentPrice * _quantity) / 1e18;
-    uint256 rawRefund = (probTimesQty * PAYOUT_PER_SHARE) / 1e18;
+        uint256 costBefore = _lmsrCost(_marketId);
+
+        // Temporarily update shares to calculate cost after
+        option.totalShares -= _quantity;
+
+        uint256 costAfter = _lmsrCost(_marketId);
+
+        // Revert state change
+        option.totalShares += _quantity;
+
+        uint256 rawRefund = costBefore - costAfter;
         if (rawRefund == 0) revert PriceTooLow();
         uint256 fee = (rawRefund * platformFeeRate) / 10000;
         uint256 netRefund = rawRefund - fee;
@@ -805,7 +813,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
 
         // Events after successful interaction
         emit FeeAccrued(_marketId, _optionId, false, rawRefund, fee);
-        emit SharesSold(_marketId, _optionId, msg.sender, _quantity, effectiveAvg);
         emit TradeExecuted(_marketId, _optionId, address(0), msg.sender, effectiveAvg, _quantity, tradeCount++);
         globalTradeCount++; // Track global trade count
         emit FeeCollected(_marketId, fee);
