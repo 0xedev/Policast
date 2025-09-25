@@ -177,7 +177,8 @@ contract SimpleArbitrageTest is Test {
             // Sell immediately
             uint256 balanceBeforeSell = token.balanceOf(ARBITRAGEUR);
             policast.sellShares(marketId, 0, sharesOwned, 0, 0);
-            uint256 sellProceeds = balanceBeforeSell - token.balanceOf(ARBITRAGEUR);
+            uint256 balanceAfterSell = token.balanceOf(ARBITRAGEUR);
+            uint256 sellProceeds = balanceAfterSell - balanceBeforeSell; // positive proceeds
 
             uint256 finalBalance = token.balanceOf(ARBITRAGEUR);
             int256 netResult = int256(finalBalance) - int256(initialBalance);

@@ -447,13 +447,15 @@ contract PolicastBasicTest is Test {
 
     function testLMSRProbabilityInvariants() public {
         uint256 mId = _createSimpleMarket();
-        uint256[] memory probs = views.getMarketOdds(mId);
+        uint256 optionCount = 3; // simple market uses 3 options
         uint256 sum = 0;
-        for (uint256 i = 0; i < probs.length; i++) {
-            sum += probs[i];
+        for (uint256 i = 0; i < optionCount; i++) {
+            uint256 p = views.calculateCurrentPrice(mId, i);
+            sum += p;
+            assertLe(p, 1e18, "p<=1");
+            assertGt(p, 0, "p>0");
         }
-        // Probabilities should sum to approximately 1e18 (with small tolerance)
-        assertApproxEqAbs(sum, 1e18, 1e15, "Probabilities don't sum to 1");
+        assertApproxEqAbs(sum, 1e18, 2e13, "Probabilities don't sum to 1");
     }
 
     function testLMSRPriceMonotonicity() public {

@@ -60,15 +60,14 @@ contract LMSRMultiOptionTest is Test {
         for (uint256 k = 0; k < counts.length; k++) {
             uint256 n = counts[k];
             uint256 mId = _create(n);
-            uint256[] memory odds = views.getMarketOdds(mId);
             uint256 sum = 0;
             for (uint256 i = 0; i < n; i++) {
-                sum += odds[i];
-                // Each should be close to 1/n
+                uint256 p = views.calculateCurrentPrice(mId, i);
+                sum += p;
                 uint256 expected = 1e18 / n;
-                assertApproxEqAbs(odds[i], expected, 1e15, "equal pricing");
+                assertApproxEqAbs(p, expected, 5e12, "equal pricing"); // 5 ppm tolerance
             }
-            assertApproxEqAbs(sum, 1e18, 1e15, "sum 1.0");
+            assertApproxEqAbs(sum, 1e18, 2e13, "sum 1.0"); // 20 ppm tolerance
         }
     }
 
@@ -81,14 +80,16 @@ contract LMSRMultiOptionTest is Test {
             vm.startPrank(user);
             market.buyShares(mId, 0, 10e18, 5e20, 0);
             vm.stopPrank();
-            uint256[] memory odds = views.getMarketOdds(mId);
             uint256 sum = 0;
-            for (uint256 i = 0; i < n; i++) sum += odds[i];
-            assertApproxEqAbs(sum, 1e18, 1e15, "sum 1.0 after buy");
-            // bought outcome should have highest probability
-            for (uint256 i = 1; i < n; i++) {
-                assertGt(odds[0], odds[i], "bought outcome should gain");
+            uint256 p0 = views.calculateCurrentPrice(mId, 0);
+            for (uint256 i = 0; i < n; i++) {
+                uint256 p = views.calculateCurrentPrice(mId, i);
+                sum += p;
+                if (i > 0) {
+                    assertGt(p0, p, "bought outcome should gain");
+                }
             }
+            assertApproxEqAbs(sum, 1e18, 2e13, "sum 1.0 after buy");
         }
     }
 
@@ -99,12 +100,12 @@ contract LMSRMultiOptionTest is Test {
         vm.startPrank(user);
         market.buyShares(mId, uint256(qtyRaw) % n, qty, 5e20, 0);
         vm.stopPrank();
-        uint256[] memory odds = views.getMarketOdds(mId);
         uint256 sum = 0;
         for (uint256 i = 0; i < n; i++) {
-            assertLe(odds[i], 1e18, "p<=1");
-            sum += odds[i];
+            uint256 p = views.calculateCurrentPrice(mId, i);
+            assertLe(p, 1e18, "p<=1");
+            sum += p;
         }
-        assertApproxEqAbs(sum, 1e18, 2e15, "sum 1.0 fuzz");
+        assertApproxEqAbs(sum, 1e18, 3e13, "sum 1.0 fuzz");
     }
 }

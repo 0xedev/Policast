@@ -131,7 +131,9 @@ contract ArbitrageFeeAnalysisDetailed is Test {
         vm.prank(ARBITRAGEUR);
         uint256 balanceBeforeClaim = token.balanceOf(ARBITRAGEUR);
 
-        try policast.claimWinnings(marketId) {
+    // Ensure msg.sender context is ARBITRAGEUR for the claim call
+    vm.prank(ARBITRAGEUR);
+    try policast.claimWinnings(marketId) {
             uint256 balanceAfterClaim = token.balanceOf(ARBITRAGEUR);
             uint256 claimAmount = balanceAfterClaim - balanceBeforeClaim;
 

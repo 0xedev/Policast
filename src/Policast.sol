@@ -617,6 +617,8 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         marketActive(_marketId)
         validOption(_marketId, _optionId)
     {
+        // Enforce market validation before trading (restores invariant expected by tests)
+        if (!markets[_marketId].validated) revert MarketNotValidated();
         if (_quantity == 0) revert AmountMustBePositive();
         // Add overflow protection
         if (_quantity > type(uint128).max) revert InvalidInput();
@@ -718,6 +720,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         marketActive(_marketId)
         validOption(_marketId, _optionId)
     {
+        if (!markets[_marketId].validated) revert MarketNotValidated();
         if (_quantity == 0) revert AmountMustBePositive();
         if (markets[_marketId].userShares[msg.sender][_optionId] < _quantity) revert InsufficientShares();
         // Add overflow protection
