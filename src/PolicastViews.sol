@@ -552,8 +552,9 @@ contract PolicastViews {
     function calculateUnrealizedPnL(address _user) external view returns (int256) {
         int256 totalUnrealized = 0;
 
-        // Iterate through all markets to find user's positions
-        for (uint256 marketId = 1; marketId <= policast.marketCount(); marketId++) {
+        // Iterate through all markets (IDs are 0..marketCount-1). Previous implementation started at 1 and used <= which skipped market 0 and could read past end.
+        uint256 mCount = policast.marketCount();
+        for (uint256 marketId = 0; marketId < mCount; marketId++) {
             // Get market basic info to check if invalidated and resolved status
             (,,,, uint256 optionCount, bool resolved,, bool invalidated, uint256 totalVolume) =
                 policast.getMarketBasicInfo(marketId);
@@ -580,9 +581,10 @@ contract PolicastViews {
                         currentValue = 0; // Losing positions worth nothing
                     }
                 } else {
-                    // For unresolved markets, use current market price
+                    // For unresolved markets, mark-to-market using token price per share = probability * PAYOUT_PER_SHARE
                     (,,,, uint256 currentPrice,) = policast.getMarketOption(marketId, optionId);
-                    currentValue = userShares * currentPrice / 1e18;
+                    // userShares (1e18) * currentPrice (1e18) * PAYOUT_PER_SHARE (1e18) / 1e36 => tokens (1e18)
+                    currentValue = (userShares * currentPrice / 1e18) * policast.PAYOUT_PER_SHARE() / 1e18;
                 }
 
                 totalUnrealized += int256(currentValue) - int256(costBasis);
