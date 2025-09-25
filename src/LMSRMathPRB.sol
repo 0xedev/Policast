@@ -13,6 +13,43 @@ import {UD60x18} from "lib/prb-math/src/ud60x18/ValueType.sol";
 library LMSRMathPRB {
     uint256 internal constant ONE = 1e18;
     uint256 internal constant ONE_SQUARED = 1e36; // ONE * ONE
+    // Max safe input for PRB-Math exp for UD60x18 is about 133.084...; use a conservative bound
+    uint256 internal constant MAX_EXP_INPUT = 133e18;
+
+    /**
+     * @notice Compute LMSR liquidity parameter b based on initial liquidity and option count
+     * @dev Mirrors previous logic from legacy LMSRMath.computeB. Returns b in share units (1e18 scale).
+     * @param initialLiquidity Initial token liquidity provided (1e18 tokens)
+     * @param optionCount Number of outcomes (2-10 supported)
+     * @param payoutPerShare Payout per winning share in tokens (1e18 scaled)
+     */
+    function computeB(uint256 initialLiquidity, uint256 optionCount, uint256 payoutPerShare)
+        internal
+        pure
+        returns (uint256)
+    {
+        if (optionCount < 2) revert("BadOptionCount");
+        if (optionCount > 10) revert("UnsupportedOptionCount");
+        if (initialLiquidity == 0) revert("ZeroLiquidity");
+        if (payoutPerShare == 0) revert("ZeroPayoutPerShare");
+
+        uint256 lnN;
+        if (optionCount == 2) lnN = 693147180559945309; // ln(2)
+        else if (optionCount == 3) lnN = 1098612288668109692; // ln(3)
+        else if (optionCount == 4) lnN = 1386294361119890648; // ln(4)
+        else if (optionCount == 5) lnN = 1609437912434100375; // ln(5)
+        else if (optionCount == 6) lnN = 1783378370508591168; // ln(6)
+        else if (optionCount == 7) lnN = 1922703101705143167; // ln(7)
+        else if (optionCount == 8) lnN = 2037421927016425482; // ln(8)
+        else if (optionCount == 9) lnN = 2133745237141597423; // ln(9)
+        else lnN = 2218487496163563680; // ln(10)
+
+        uint256 sharesEquivalent = (initialLiquidity * ONE) / payoutPerShare; // convert tokens to share units
+        uint256 bShares = (sharesEquivalent * ONE) / lnN; // divide by ln(n)
+        if (bShares < 10e18) bShares = 10e18;
+        if (bShares > 10_000_000e18) bShares = 10_000_000e18;
+        return bShares;
+    }
 
     /**
      * @notice Compute LMSR cost function C(q) = b * log( sum_i exp(q_i / b) )
@@ -43,15 +80,20 @@ library LMSRMathPRB {
             if (diff == 0) {
                 expVals[i] = ONE; // exp(0)=1
             } else {
-                // exp(diff) where diff is 1e18 scaled positive number
-                uint256 ePos = UD60x18.unwrap(UD60x18.wrap(diff).exp()); // exp(diff)
-                // Guard: ePos should be >= 1e18
-                if (ePos <= ONE) {
-                    // Extremely small diff rounding produced 1; reciprocal still 1
-                    expVals[i] = ONE;
+                if (diff >= MAX_EXP_INPUT) {
+                    // exp(diff) too large -> contribution ~0
+                    expVals[i] = 0;
                 } else {
-                    // reciprocal: 1 / ePos
-                    expVals[i] = ONE_SQUARED / ePos; // (1e18 * 1e18)/ePos => 1e18 scaled
+                    // exp(diff) where diff is 1e18 scaled positive number
+                    uint256 ePos = UD60x18.unwrap(UD60x18.wrap(diff).exp()); // exp(diff)
+                    // Guard: ePos should be >= 1e18
+                    if (ePos <= ONE) {
+                        // Extremely small diff rounding produced 1; reciprocal still 1
+                        expVals[i] = ONE;
+                    } else {
+                        // reciprocal: 1 / ePos
+                        expVals[i] = ONE_SQUARED / ePos; // (1e18 * 1e18)/ePos => 1e18 scaled
+                    }
                 }
             }
             sumExp += expVals[i]; // n<=10 so no overflow risk
@@ -91,11 +133,15 @@ library LMSRMathPRB {
             if (diff == 0) {
                 val = ONE;
             } else {
-                uint256 ePos = UD60x18.unwrap(UD60x18.wrap(diff).exp()); // exp(diff)
-                if (ePos <= ONE) {
-                    val = ONE; // near-zero diff
+                if (diff >= MAX_EXP_INPUT) {
+                    val = 0; // negligible contribution
                 } else {
-                    val = ONE_SQUARED / ePos; // reciprocal
+                    uint256 ePos = UD60x18.unwrap(UD60x18.wrap(diff).exp()); // exp(diff)
+                    if (ePos <= ONE) {
+                        val = ONE; // near-zero diff
+                    } else {
+                        val = ONE_SQUARED / ePos; // reciprocal
+                    }
                 }
             }
             expVals[i] = val;

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {LMSRMath} from "./LMSRMath.sol"; // retain for computeB
 import {LMSRMathPRB} from "./LMSRMathPRB.sol";
 
 /**
@@ -131,7 +130,7 @@ library PolicastLogic {
      * @return B parameter for LMSR
      */
     function computeB(uint256 initialLiquidity, uint256 optionCount) internal pure returns (uint256) {
-        return LMSRMath.computeB(initialLiquidity, optionCount, PAYOUT_PER_SHARE);
+        return LMSRMathPRB.computeB(initialLiquidity, optionCount, PAYOUT_PER_SHARE);
     }
 
     /**

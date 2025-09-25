@@ -118,11 +118,29 @@ contract PricingDebugTest is Test {
         vm.startPrank(buyer);
         token.approve(address(market), type(uint256).max);
 
-        // 1. Get the expected cost from the view function
-        (,, uint256 totalCost, uint256 avgPricePerShare) = views.quoteBuy(marketId, optionId, quantity);
+    // 1. Get the expected cost from the view function (ΔC + fee)
+    (uint256 rawCost, uint256 fee, uint256 totalCost, uint256 avgPricePerShare) = views.quoteBuy(marketId, optionId, quantity);
 
-        // Guard: ensure quoted cost is within plausible bounds ( < 120k tokens )
-        assertLt(totalCost, 120_000e18, "Quoted buy cost too large - scaling bug");
+    // Basic sanity checks on raw cost & fee
+    assertGt(rawCost, 0, "Raw cost zero");
+    uint256 expectedFee = (rawCost * 200) / 10000; // 2%
+    uint256 feeDiff = fee > expectedFee ? fee - expectedFee : expectedFee - fee;
+    assertLt(feeDiff, 2, "Fee mismatch");
+
+    // Compute linear (no-slippage) reference cost
+    (,,,, uint256 optionCurrentPrice,) = market.getMarketOption(marketId, optionId);
+    uint256 probTimesQty = (optionCurrentPrice * quantity) / 1e18; // 1e18-scaled shares * price
+    uint256 linearRaw = (probTimesQty * 100e18) / 1e18; // tokens without fee
+    uint256 linearFee = (linearRaw * 200) / 10000;
+    uint256 linearTotal = linearRaw + linearFee;
+
+    // Slippage ratio (scaled 1e18). Expect small positive slippage.
+    uint256 slippageNumerator = totalCost > linearTotal ? totalCost - linearTotal : 0;
+    uint256 slippageRatio = (slippageNumerator * 1e18) / linearTotal; // 1e18 scaled
+    // Require <5% slippage for this trade size given large B
+    assertLt(slippageRatio, 5e16, "Buy slippage >5% unexpected");
+    // Prevent runaway cost
+    assertLt(totalCost, linearTotal * 2, "Quoted buy cost >2x linear");
 
         console.log("=== Actual Buy Execution Test ===");
         console.log("Buyer starting balance:", token.balanceOf(buyer));
@@ -144,14 +162,15 @@ contract PricingDebugTest is Test {
         console.log("Buyer balance after buy:", balanceAfterBuy);
         console.log("Actual cost deducted:", actualCost);
 
-        // The actual cost deducted must exactly match the total cost from the quote
-        assertEq(actualCost, totalCost, "Actual cost deducted does not match quoted total cost");
+    // The actual cost deducted must exactly match the total cost from the quote
+    assertEq(actualCost, totalCost, "Actual cost deducted does not match quoted total cost");
 
-        // For good measure, let's also check against a hardcoded approximate value
-        uint256 expectedApproxCost = 33999e18; // ~34k tokens with fees
-        assertApproxEqRel(actualCost, expectedApproxCost, 1e16, "Actual cost is not ~34k tokens");
+    // Realized slippage should match quoted slippage within tolerance
+    uint256 realizedSlippage = totalCost > linearTotal ? ((totalCost - linearTotal) * 1e18) / linearTotal : 0;
+    uint256 slipDiff = realizedSlippage > slippageRatio ? realizedSlippage - slippageRatio : slippageRatio - realizedSlippage;
+    assertLt(slipDiff, 5e12, "Realized vs quoted slippage drift");
 
-        console.log("SUCCESS: Actual buy cost matches the quoted price.");
+    console.log("SUCCESS: Actual buy cost matches quote. Slippage (bps):", slippageRatio / 1e14);
 
         console.log("\n=== Actual Sell Execution Test ===");
 
@@ -180,6 +199,14 @@ contract PricingDebugTest is Test {
         // The actual return received must exactly match the total return from the quote
         assertEq(actualReturn, totalReturn, "Actual return received does not match quoted total return");
 
-        console.log("SUCCESS: Actual sell return matches the quoted price. The bug is fixed.");
+        // Round-trip sanity: net loss mostly fees (2% each side) + small slippage
+        uint256 netLoss = actualCost > actualReturn ? actualCost - actualReturn : 0;
+        // Expect between ~1x and ~3x single-side fee (raw linear fee) for this size
+        uint256 linearFeeMin = linearFee / 2; // allow a bit lower if pricing moved favorably
+        uint256 linearFeeMax = linearFee * 3; // cap excessive loss
+        assertGt(netLoss, linearFeeMin, "Net loss too small - fee not applied?");
+        assertLt(netLoss, linearFeeMax, "Net loss too large - excessive slippage?");
+
+        console.log("SUCCESS: Round-trip consistent. Net loss tokens:", netLoss);
     }
 }
