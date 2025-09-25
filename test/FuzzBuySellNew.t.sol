@@ -27,9 +27,13 @@ contract FuzzBuySellNewTest is Test {
         vm.startPrank(OWNER);
         token.approve(address(market), type(uint256).max);
         string[] memory names = new string[](3);
-        names[0] = "A"; names[1] = "B"; names[2] = "C";
+        names[0] = "A";
+        names[1] = "B";
+        names[2] = "C";
         string[] memory desc = new string[](3);
-        desc[0] = ""; desc[1] = ""; desc[2] = "";
+        desc[0] = "";
+        desc[1] = "";
+        desc[2] = "";
         uint256 marketId = market.createMarket(
             "Tri",
             "",

@@ -10,7 +10,7 @@ contract CheckRemainingLiquidityTest is Test {
     PolicastMarketV3 public policast;
     PolicastViews public policastViews;
     MockERC20 public token;
-    
+
     address constant CREATOR = 0x1234567890123456789012345678901234567890;
     address constant USER1 = 0x1111111111111111111111111111111111111111;
     address constant USER2 = 0x2222222222222222222222222222222222222222;
@@ -26,7 +26,7 @@ contract CheckRemainingLiquidityTest is Test {
     function setUp() public {
         // Deploy token with sufficient supply for everyone
         token = new MockERC20(10_000_000 * 1e18); // 10M tokens
-        
+
         // Deploy contracts with proper constructor arguments
         policast = new PolicastMarketV3(address(token));
         policastViews = new PolicastViews(address(policast));
@@ -81,12 +81,12 @@ contract CheckRemainingLiquidityTest is Test {
         options[0] = "Bitcoin (BTC)";
         options[1] = "Ethereum (ETH)";
         options[2] = "Solana (SOL)";
-        
+
         string[] memory symbols = new string[](3);
         symbols[0] = "BTC";
         symbols[1] = "ETH";
         symbols[2] = "SOL";
-        
+
         uint256 marketId = policast.createMarket(
             "Which crypto will perform best this quarter?",
             "A comprehensive prediction market testing the 1:100 ratio",
@@ -95,7 +95,7 @@ contract CheckRemainingLiquidityTest is Test {
             7 days,
             PolicastMarketV3.MarketCategory.OTHER,
             PolicastMarketV3.MarketType.PAID,
-            200_000 * 1e18,  // 200k initial liquidity
+            200_000 * 1e18, // 200k initial liquidity
             false // not early resolution
         );
 
@@ -103,11 +103,11 @@ contract CheckRemainingLiquidityTest is Test {
         vm.prank(CREATOR);
         policast.validateMarket(marketId);
 
-         token.balanceOf(address(policast));
+        token.balanceOf(address(policast));
 
         // Simulate the exact same trades as in the full lifecycle test
         // These trades result in 16 total ETH shares being held by winners
-        
+
         // Phase 1
         vm.prank(USER1);
         policast.buyShares(marketId, 0, 5 * 1e18, type(uint256).max, 0); // 5 BTC

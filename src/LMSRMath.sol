@@ -29,24 +29,24 @@ library LMSRMath {
 
         // Use signed accumulator to avoid clamping errors when x > 1e18
         int256 acc = int256(1e18);
-        acc -= int256(x1);                 // - x
-        acc += int256(x2) / 2;             // + x^2/2
-        acc -= int256(x3) / 6;             // - x^3/6
-        acc += int256(x4) / 24;            // + x^4/24
-        acc -= int256(x5) / 120;           // - x^5/120
-        acc += int256(x6) / 720;           // + x^6/720
-        acc -= int256(x7) / 5040;          // - x^7/5040
+        acc -= int256(x1); // - x
+        acc += int256(x2) / 2; // + x^2/2
+        acc -= int256(x3) / 6; // - x^3/6
+        acc += int256(x4) / 24; // + x^4/24
+        acc -= int256(x5) / 120; // - x^5/120
+        acc += int256(x6) / 720; // + x^6/720
+        acc -= int256(x7) / 5040; // - x^7/5040
 
         if (acc <= 0) return 0; // underflow to ~0
         return uint256(acc);
     }
 
-    function ln(uint256 y) internal pure returns (uint256) {
+    function ln(uint256 y) internal pure returns (int256) {
         // Natural log for y in (0, +inf). 1e18 scaling. Uses range reduction to (1,2]
         // then atanh series: ln(y) = 2*( z + z^3/3 + z^5/5 + z^7/7 + z^9/9 ), z=(y-1)/(y+1)
         require(y > 0, "LN_ZERO");
         // Note: Removed require(y >= 1e18) to support full range
-        
+
         int256 result = 0;
         // Range reduce by powers of two to bring y into (0.5, 2]
         while (y >= 2e18) {
@@ -76,7 +76,7 @@ library LMSRMath {
         series += z7 / 7;
         series += z9 / 9;
         uint256 core = (series * 2); // multiply by 2 (still 1e18 scaled)
-        
+
         // Combine with accumulated powers-of-two adjustments using signed arithmetic
         if (sign == 0) {
             // y < 1, so ln(y) < 0
@@ -85,37 +85,40 @@ library LMSRMath {
             // y >= 1, so ln(y) >= 0
             result += int256(core);
         }
-        
+
         // Convert back to uint256, handling negative results appropriately
-        if (result < 0) {
-            // This should not happen in practice since we require y >= 1e18
-            revert("NegativeLnResult");
-        }
-        return uint256(result);
+        return result; // signed natural log (1e18 scaled)
     }
 
     function logSumExp(uint256[] memory scaled) internal pure returns (uint256 maxScaled, uint256 lnSumExp) {
         uint256 n = scaled.length;
         if (n == 0) return (0, 0);
-        // Find max for stability
         for (uint256 i = 0; i < n; i++) {
             uint256 v = scaled[i];
             if (v > maxScaled) maxScaled = v;
         }
-        // Sum exp(scaled[i]-max)
         uint256 sumExp = 0;
         for (uint256 i = 0; i < n; i++) {
             uint256 diff = scaled[i] >= maxScaled ? 0 : (maxScaled - scaled[i]);
-            sumExp += expNeg(diff);
+            uint256 e = expNeg(diff); // 1e18 scaled
+            sumExp += e; // safe for n<=10
         }
-        // ln(sumExp / 1e18) = ln(sumExp) - ln(1e18) ; ln(1e18)= ~ 41.446531673892822e18 (but we operate with scaling embedded)
-        // We already keep scaling inside _ln; since sumExp is 1e18-scaled sum of 1e18 terms, divide by 1e18 logically -> skip by subtracting ln(1e18).
-        // For simplicity we approximate ln(1e18) = 18 * ln(10) ≈ 4144653167389282231 (1e18 scaled). Precompute constant.
-        uint256 LN_1E18 = 4144653167389282231;
-        uint256 lnSum = ln(sumExp);
-        if (lnSum > LN_1E18) lnSumExp = lnSum - LN_1E18; // positive region
-
-        else lnSumExp = 0; // extremely small (should not happen with n>=1)
+        // sumExp is sum of 1e18-scaled exponentials. Need ln(sumExp/1e18).
+        // ln(1e18) = 18 * ln(10) ≈ 41.446531673892822312 * 1e18
+        // Correct 1e18-scaled constant:
+        int256 LN_1E18 = 41446531673892822312;
+        int256 lnSum = ln(sumExp); // signed
+        // lnSumExp can be negative (e.g., when maxScaled >> others and n small)
+        int256 diff = lnSum - LN_1E18; // still 1e18 scaled, could be <0
+        if (diff < 0) {
+            // Encode negative using two's complement cast via uint256 then rely on caller to treat as signed? Simpler: clamp to 0 to avoid under-estimation bias.
+            // However clamping distorts probabilities; instead return 0 when negative magnitude is tiny. If large negative, return 0 to avoid underflow.
+            // For precision we allow negative by storing sign externally: but existing interface expects uint256.
+            // Given downstream just adds maxScaled + lnSumExp (both uint), negative would underflow. So fallback to 0.
+            lnSumExp = 0;
+        } else {
+            lnSumExp = uint256(diff);
+        }
     }
 
     function computeB(uint256 _initialLiquidity, uint256 _optionCount, uint256 payoutPerShare)
@@ -123,62 +126,45 @@ library LMSRMath {
         pure
         returns (uint256)
     {
-        // Checks first (CEI pattern)
         if (_optionCount < 2) revert("BadOptionCount");
+        if (_optionCount > 10) revert("UnsupportedOptionCount");
         if (_initialLiquidity == 0) revert("ZeroLiquidity");
         if (payoutPerShare == 0) revert("ZeroPayoutPerShare");
-        
-        // Fixed b values based on option count for optimal price stability (25-30 range)
-        uint256 b;
+
+        // Target: platform should initially allow buying ~5% of payout on one outcome
+        // before probability shifts by more than a few points.
+        // Classic LMSR guidance: choose b roughly = (initial bankroll) / ln(n)
+        // We treat initialLiquidity as bankroll (already 1e18 scaled tokens).
+        // Convert tokens to share units: divide by payoutPerShare, then scale back to 1e18.
+        // b_shares = (initialLiquidity * 1e18 / payoutPerShare) / ln(n)
+        // Use fixed ln(n) approximation for n<=10.
         uint256 lnN;
-        
-        if (_optionCount == 2) {
-            b = 30e18;
-            lnN = 693147180559945309; // ln(2)
-        } else if (_optionCount == 3) {
-            b = 29e18;
-            lnN = 1098612288668109692; // ln(3)
-        } else if (_optionCount == 4) {
-            b = 28e18;
-            lnN = 1386294361119890614; // ln(4)
-        } else if (_optionCount == 5) {
-            b = 27e18;
-            lnN = 1609437912434100375; // ln(5)
-        } else if (_optionCount == 6) {
-            b = 26e18;
-            lnN = 1791759469228055172; // ln(6)
-        } else if (_optionCount == 7) {
-            b = 26e18;
-            lnN = 1945932330622312828; // ln(7)
-        } else if (_optionCount == 8) {
-            b = 25e18;
-            lnN = 2079441541679835928; // ln(8)
-        } else if (_optionCount == 9) {
-            b = 25e18;
-            lnN = 2197224577336213040; // ln(9)
-        } else if (_optionCount == 10) {
-            b = 25e18;
-            lnN = 2302585092994045684; // ln(10)
-        } else {
-            revert("UnsupportedOptionCount");
-        }
-        
-        // Effects: Calculate worst case loss using conservative approximation
-        // This represents the maximum loss when all volume goes to one outcome
-        // Formula: worst_case_loss = b * ln(n) * payoutPerShare
-        // This is derived from the LMSR cost function maximum differential
-        uint256 worstCaseLoss;
-        unchecked {
-            // Safe math: all values are bounded and checked above
-            uint256 bTimesLn = (b * lnN) / 1e18;
-            worstCaseLoss = (bTimesLn * payoutPerShare) / 1e18;
-        }
-        
-        // Final validation: ensure liquidity can cover worst case
-        if (_initialLiquidity < worstCaseLoss) {
-            revert("InsufficientInitialLiquidity");
-        }
-        
-        return b;
+        if (_optionCount == 2) lnN = 693147180559945309; // ln(2)
+
+        else if (_optionCount == 3) lnN = 1098612288668109692; // ln(3)
+
+        else if (_optionCount == 4) lnN = 1386294361119890648; // ln(4)
+
+        else if (_optionCount == 5) lnN = 1609437912434100375; // ln(5)
+
+        else if (_optionCount == 6) lnN = 1783378370508591168; // ln(6)
+
+        else if (_optionCount == 7) lnN = 1922703101705143167; // ln(7)
+
+        else if (_optionCount == 8) lnN = 2037421927016425482; // ln(8)
+
+        else if (_optionCount == 9) lnN = 2133745237141597423; // ln(9)
+
+        else lnN = 2218487496163563680; // ln(10)
+
+        // sharesEquivalent = initialLiquidity / payoutPerShare (both 1e18 scaled) => (initialLiquidity * 1e18) / payoutPerShare
+        uint256 sharesEquivalent = (_initialLiquidity * 1e18) / payoutPerShare;
+        // b_shares = sharesEquivalent / lnN  (both 1e18 scaled)
+        uint256 bShares = (sharesEquivalent * 1e18) / lnN;
+
+        // Safety clamp: ensure b not absurdly small or huge
+        if (bShares < 10e18) bShares = 10e18;
+        if (bShares > 10_000_000e18) bShares = 10_000_000e18;
+        return bShares;
     }
 }

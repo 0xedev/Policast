@@ -39,10 +39,10 @@ contract SimplePriceTest is Test {
         views = new PolicastViews(address(market));
 
         // CRITICAL FIX: Increase creator funding for 3-option test
-        token.transfer(creator, 200000 ether);  // Increased from 100k to cover 150k + buffer
+        token.transfer(creator, 200000 ether); // Increased from 100k to cover 150k + buffer
         token.transfer(trader, 10000 ether);
 
-        // Set approvals  
+        // Set approvals
         vm.prank(creator);
         token.approve(address(market), type(uint256).max);
         vm.prank(trader);
@@ -51,7 +51,7 @@ contract SimplePriceTest is Test {
         // Grant roles - following CEI pattern (checks, effects, interactions)
         vm.startPrank(creator);
         market.grantQuestionCreatorRole(creator);
-        market.grantQuestionResolveRole(creator);  
+        market.grantQuestionResolveRole(creator);
         market.grantMarketValidatorRole(creator);
         vm.stopPrank();
     }
@@ -212,18 +212,18 @@ contract SimplePriceTest is Test {
         vm.startPrank(trader);
         market.buyShares(mId, 0, 1e18, type(uint256).max, 0); // 1 share, unlimited cost, no deadline
         vm.stopPrank();
-        
+
         uint256 p0_1 = views.calculateCurrentPrice(mId, 0);
         uint256 p1_1 = views.calculateCurrentPrice(mId, 1);
         console.log("After buying 1 share A - Price A:", p0_1);
         console.log("After buying 1 share A - Price B:", p1_1);
 
-        // Step 3: Buy another 1 share of option A  
+        // Step 3: Buy another 1 share of option A
         console.log("Buying 1 more share of option A");
         vm.startPrank(trader);
         market.buyShares(mId, 0, 1e18, type(uint256).max, 0);
         vm.stopPrank();
-        
+
         uint256 p0_2 = views.calculateCurrentPrice(mId, 0);
         uint256 p1_2 = views.calculateCurrentPrice(mId, 1);
         console.log("After buying 2 total shares A - Price A:", p0_2);
@@ -234,7 +234,7 @@ contract SimplePriceTest is Test {
         uint256[] memory shares = getUserShares(mId, trader);
         console.log("Trader has shares A:", shares[0]);
         console.log("Trader has shares B:", shares[1]);
-        
+
         // Should have exactly 2 shares of A
         assertEq(shares[0], 2e18, "Should have exactly 2 shares of A");
         assertEq(shares[1], 0, "Should have 0 shares of B");
@@ -245,7 +245,7 @@ contract SimplePriceTest is Test {
         vm.startPrank(trader);
         market.sellShares(mId, 0, sellAmount, 0, 0); // 0.2 shares, min price 0, no deadline
         vm.stopPrank();
-        
+
         uint256 p0_3 = views.calculateCurrentPrice(mId, 0);
         uint256 p1_3 = views.calculateCurrentPrice(mId, 1);
         console.log("After selling 0.2 shares A - Price A:", p0_3);

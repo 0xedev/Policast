@@ -10,7 +10,7 @@ contract LosersPayWinnerTest is Test {
     PolicastMarketV3 public policast;
     PolicastViews public policastViews;
     MockERC20 public token;
-    
+
     address constant CREATOR = 0x1234567890123456789012345678901234567890;
     address constant WINNER = 0x1111111111111111111111111111111111111111;
     address constant LOSER1 = 0x2222222222222222222222222222222222222222;
@@ -21,7 +21,7 @@ contract LosersPayWinnerTest is Test {
     function setUp() public {
         // Deploy token with sufficient supply
         token = new MockERC20(10_000_000 * 1e18);
-        
+
         // Deploy contracts
         policast = new PolicastMarketV3(address(token));
         policastViews = new PolicastViews(address(policast));
@@ -56,17 +56,17 @@ contract LosersPayWinnerTest is Test {
 
     function testLosersPayWinnerScenario() public {
         console.log("=== 4 LOSERS PAY 1 WINNER SCENARIO ===");
-        
+
         // Create market with minimal initial liquidity
         vm.prank(CREATOR);
         string[] memory options = new string[](2);
         options[0] = "Winning Option";
         options[1] = "Losing Option";
-        
+
         string[] memory symbols = new string[](2);
         symbols[0] = "WIN";
         symbols[1] = "LOSE";
-        
+
         uint256 marketId = policast.createMarket(
             "Will losers fund the winner?",
             "Testing scenario where many losers fund one winner",
@@ -75,7 +75,7 @@ contract LosersPayWinnerTest is Test {
             7 days,
             PolicastMarketV3.MarketCategory.OTHER,
             PolicastMarketV3.MarketType.PAID,
-            50_000 * 1e18,  // 50k initial liquidity
+            50_000 * 1e18, // 50k initial liquidity
             false
         );
 
@@ -131,10 +131,10 @@ contract LosersPayWinnerTest is Test {
 
         // Check shares
         uint256 winnerShares = policast.getMarketOptionUserShares(marketId, 0, WINNER);
-        uint256 totalLosingShares = policast.getMarketOptionUserShares(marketId, 1, LOSER1) +
-                                   policast.getMarketOptionUserShares(marketId, 1, LOSER2) +
-                                   policast.getMarketOptionUserShares(marketId, 1, LOSER3) +
-                                   policast.getMarketOptionUserShares(marketId, 1, LOSER4);
+        uint256 totalLosingShares = policast.getMarketOptionUserShares(marketId, 1, LOSER1)
+            + policast.getMarketOptionUserShares(marketId, 1, LOSER2)
+            + policast.getMarketOptionUserShares(marketId, 1, LOSER3)
+            + policast.getMarketOptionUserShares(marketId, 1, LOSER4);
 
         console.log("Winner holds:", winnerShares / 1e18, "winning shares");
         console.log("Losers hold total:", totalLosingShares / 1e18, "losing shares");
@@ -143,7 +143,10 @@ contract LosersPayWinnerTest is Test {
         console.log("Expected winner payout:", expectedPayout, "tokens");
 
         // Check math: Did trading bring in enough to cover payout?
-        console.log("Will losers fund winner?", tradingProfit >= expectedPayout * 1e18 ? "YES - Trading profit covers it!" : "NO - Initial liquidity needed");
+        console.log(
+            "Will losers fund winner?",
+            tradingProfit >= expectedPayout * 1e18 ? "YES - Trading profit covers it!" : "NO - Initial liquidity needed"
+        );
 
         // Resolve to WIN (option 0) - the winner wins!
         vm.warp(block.timestamp + 8 days);
@@ -174,12 +177,16 @@ contract LosersPayWinnerTest is Test {
         console.log("Losers received: 0 tokens (they lost)");
         console.log("Losers net loss:", totalLoserInvestment / 1e18, "tokens");
         console.log("");
-        console.log("Initial liquidity used for payout:", (initialBalance + tradingProfit - finalContractBalance) / 1e18, "tokens");
-        
+        console.log(
+            "Initial liquidity used for payout:",
+            (initialBalance + tradingProfit - finalContractBalance) / 1e18,
+            "tokens"
+        );
+
         // The key insight: trading profit comes from losers!
         console.log("Trading profit (from losers):", tradingProfit / 1e18, "tokens");
         console.log("Winner payout:", winnerPayout / 1e18, "tokens");
-        
+
         if (tradingProfit >= winnerPayout) {
             console.log("PROOF: Losers funded the entire winner payout!");
             console.log("Excess from losers after paying winner:", (tradingProfit - winnerPayout) / 1e18, "tokens");

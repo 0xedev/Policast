@@ -10,7 +10,7 @@ contract MultipleTradesTest is Test {
     // Precomputed selectors for overloaded functions
     bytes4 private constant BUY_EXT_SIG = bytes4(keccak256("buyShares(uint256,uint256,uint256,uint256,uint256)"));
     bytes4 private constant SELL_EXT_SIG = bytes4(keccak256("sellShares(uint256,uint256,uint256,uint256,uint256)"));
-    
+
     PolicastMarketV3 public market;
     PolicastViews public views;
     MockERC20 public token;
@@ -67,36 +67,27 @@ contract MultipleTradesTest is Test {
         vm.stopPrank();
     }
 
-    function _logTrade(
-        uint256 mId,
-        uint256 optId,
-        address trader,
-        string memory action,
-        uint256 quantity,
-        uint256 step
-    ) internal {
+    function _logTrade(uint256 mId, uint256 optId, address trader, string memory action, uint256 quantity, uint256 step)
+        internal
+    {
         uint256 priceA = views.calculateCurrentPrice(mId, 0);
         uint256 priceB = views.calculateCurrentPrice(mId, 1);
         emit TradeLog(mId, optId, trader, action, quantity, priceA, priceB, step);
     }
 
-    function _adaptiveBuy(
-        uint256 mId,
-        uint256 optId,
-        address trader,
-        uint256 startQty,
-        uint256 step
-    ) internal returns (uint256) {
+    function _adaptiveBuy(uint256 mId, uint256 optId, address trader, uint256 startQty, uint256 step)
+        internal
+        returns (uint256)
+    {
         uint256 qty = startQty;
         uint256 executed = 0;
-        
+
         for (uint256 i = 0; i < 12; i++) {
             vm.startPrank(trader);
-            (bool ok,) = address(market).call(
-                abi.encodeWithSelector(BUY_EXT_SIG, mId, optId, qty, type(uint256).max, 0)
-            );
+            (bool ok,) =
+                address(market).call(abi.encodeWithSelector(BUY_EXT_SIG, mId, optId, qty, type(uint256).max, 0));
             vm.stopPrank();
-            
+
             if (ok) {
                 executed = qty;
                 _logTrade(mId, optId, trader, "BUY", qty, step);
@@ -104,29 +95,24 @@ contract MultipleTradesTest is Test {
             }
             qty *= 2;
         }
-        
+
         require(executed > 0, "Adaptive buy failed");
         return executed;
     }
 
-    function _adaptiveSell(
-        uint256 mId,
-        uint256 optId,
-        address trader,
-        uint256 maxShares,
-        uint256 step
-    ) internal returns (uint256) {
+    function _adaptiveSell(uint256 mId, uint256 optId, address trader, uint256 maxShares, uint256 step)
+        internal
+        returns (uint256)
+    {
         uint256 qty = maxShares / 10; // Start with 10% of holdings
         if (qty == 0) qty = maxShares;
         uint256 executed = 0;
-        
+
         for (uint256 i = 0; i < 8 && qty > 0; i++) {
             vm.startPrank(trader);
-            (bool ok,) = address(market).call(
-                abi.encodeWithSelector(SELL_EXT_SIG, mId, optId, qty, 0, 0)
-            );
+            (bool ok,) = address(market).call(abi.encodeWithSelector(SELL_EXT_SIG, mId, optId, qty, 0, 0));
             vm.stopPrank();
-            
+
             if (ok) {
                 executed = qty;
                 _logTrade(mId, optId, trader, "SELL", qty, step);
@@ -134,7 +120,7 @@ contract MultipleTradesTest is Test {
             }
             qty /= 2;
         }
-        
+
         return executed; // Could be 0 if all attempts failed
     }
 
@@ -151,7 +137,7 @@ contract MultipleTradesTest is Test {
         string[] memory descs = new string[](2);
         descs[0] = "First option";
         descs[1] = "Second option";
-        
+
         uint256 mId = market.createMarket(
             "Multiple Trades Test",
             "Testing intensive trading patterns",
@@ -170,7 +156,7 @@ contract MultipleTradesTest is Test {
         console.log("Market ID:", mId);
         console.log("Initial Liquidity: 100,000 ETH");
         console.log("LMSR b parameter:", market.getMarketLMSRB(mId));
-        
+
         // Initial state
         _logTrade(mId, 0, address(0), "INITIAL", 0, 0);
 
@@ -199,7 +185,7 @@ contract MultipleTradesTest is Test {
         console.log("\n--- Round 4: Profit taking ---");
         uint256 shares1A = _getUserShares(mId, trader1, 0);
         uint256 shares3A = _getUserShares(mId, trader3, 0);
-        
+
         if (shares1A > 0) _adaptiveSell(mId, 0, trader1, shares1A, step++);
         if (shares3A > 0) _adaptiveSell(mId, 0, trader3, shares3A, step++);
 
@@ -214,7 +200,7 @@ contract MultipleTradesTest is Test {
         uint256 shares2A = _getUserShares(mId, trader2, 0);
         uint256 shares4A = _getUserShares(mId, trader4, 0);
         uint256 shares1B = _getUserShares(mId, trader1, 1);
-        
+
         if (shares2A > 0) _adaptiveSell(mId, 0, trader2, shares2A, step++);
         if (shares4A > 0) _adaptiveSell(mId, 0, trader4, shares4A, step++);
         if (shares1B > 0) _adaptiveSell(mId, 1, trader1, shares1B, step++);
@@ -228,23 +214,23 @@ contract MultipleTradesTest is Test {
         // Final state
         console.log("\n--- FINAL STATE ---");
         _logTrade(mId, 0, address(0), "FINAL", 0, step);
-        
+
         uint256 finalPriceA = views.calculateCurrentPrice(mId, 0);
         uint256 finalPriceB = views.calculateCurrentPrice(mId, 1);
-        
+
         console.log("Final Price A:", finalPriceA);
         console.log("Final Price B:", finalPriceB);
         console.log("Price A change from initial 50%:", int256(finalPriceA) - 5e17);
         console.log("Price B change from initial 50%:", int256(finalPriceB) - 5e17);
-        
+
         // Verify prices sum to ~1e18 (100%) after removing 100x scaling
         uint256 totalPrice = finalPriceA + finalPriceB;
         assertApproxEqRel(totalPrice, 1e18, 1e15, "Prices should sum to ~1e18 (100%)"); // 0.1% tolerance
-        
+
         // Verify both prices are positive
         assertGt(finalPriceA, 0, "Price A should be positive");
         assertGt(finalPriceB, 0, "Price B should be positive");
-        
+
         console.log("Total price sum:", totalPrice);
         console.log("Test completed successfully!");
     }
@@ -258,7 +244,7 @@ contract MultipleTradesTest is Test {
         string[] memory descs = new string[](2);
         descs[0] = "Yes outcome";
         descs[1] = "No outcome";
-        
+
         uint256 mId = market.createMarket(
             "Back and Forth Test",
             "Testing oscillating trades",
@@ -286,27 +272,27 @@ contract MultipleTradesTest is Test {
 
         // Create oscillating pattern
         console.log("\n--- Oscillating Trading Pattern ---");
-        
+
         // Push YES up
         _adaptiveBuy(mId, 0, trader1, baseQty, step++);
         _adaptiveBuy(mId, 0, trader2, baseQty, step++);
         _adaptiveBuy(mId, 0, trader1, baseQty * 2, step++);
-        
+
         // Push NO up (YES down)
         _adaptiveBuy(mId, 1, trader3, baseQty * 3, step++);
         _adaptiveBuy(mId, 1, trader4, baseQty * 3, step++);
         _adaptiveBuy(mId, 1, trader3, baseQty * 2, step++);
-        
+
         // Push YES back up
         _adaptiveBuy(mId, 0, trader2, baseQty * 4, step++);
         _adaptiveBuy(mId, 0, trader4, baseQty * 4, step++);
-        
+
         // Some selling
         uint256 sharesT1YES = _getUserShares(mId, trader1, 0);
         uint256 sharesT3NO = _getUserShares(mId, trader3, 1);
         if (sharesT1YES > 0) _adaptiveSell(mId, 0, trader1, sharesT1YES, step++);
         if (sharesT3NO > 0) _adaptiveSell(mId, 1, trader3, sharesT3NO, step++);
-        
+
         // Final push
         _adaptiveBuy(mId, 1, trader1, baseQty * 5, step++);
         _adaptiveBuy(mId, 0, trader3, baseQty * 6, step++);
@@ -314,18 +300,18 @@ contract MultipleTradesTest is Test {
         // Final state
         console.log("\n--- OSCILLATION FINAL STATE ---");
         _logTrade(mId, 0, address(0), "FINAL", 0, step);
-        
+
         uint256 finalPriceYES = views.calculateCurrentPrice(mId, 0);
         uint256 finalPriceNO = views.calculateCurrentPrice(mId, 1);
-        
+
         console.log("Final YES Price:", finalPriceYES);
         console.log("Final NO Price:", finalPriceNO);
-        
+
         // Verify market integrity - prices should sum to ~1e18 (100%) after removing 100x scaling
         assertGt(finalPriceYES, 0, "YES price should be positive");
         assertGt(finalPriceNO, 0, "NO price should be positive");
         assertApproxEqRel(finalPriceYES + finalPriceNO, 1e18, 1e15, "Prices should sum to ~1e18 (100%)");
-        
+
         console.log("Back and forth test completed!");
     }
 }

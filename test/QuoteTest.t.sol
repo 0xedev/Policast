@@ -33,7 +33,7 @@ contract QuoteTest is Test {
         // Create a 3-option market
         string[] memory options = new string[](3);
         options[0] = "Option A";
-        options[1] = "Option B";  
+        options[1] = "Option B";
         options[2] = "Option C";
 
         string[] memory descriptions = new string[](3);
@@ -67,8 +67,7 @@ contract QuoteTest is Test {
         uint256 qty = 10e18; // 10 shares
 
         // Get on-chain quote
-        (uint256 rawCost, , uint256 totalCost, uint256 avgPricePerShare) =
-            views.quoteBuy(marketId, optionId, qty);
+        (uint256 rawCost,, uint256 totalCost, uint256 avgPricePerShare) = views.quoteBuy(marketId, optionId, qty);
         assertGt(rawCost, 0, "rawCost should be > 0");
         assertGt(totalCost, rawCost, "totalCost should include fee");
         assertGt(avgPricePerShare, 0, "avg price should be > 0");
@@ -104,8 +103,7 @@ contract QuoteTest is Test {
 
         // Now, sell 7 shares
         uint256 sellQty = 7e18;
-        (uint256 rawRefund, , uint256 netRefund, uint256 avgPricePerShare) =
-            views.quoteSell(marketId, optionId, sellQty);
+        (uint256 rawRefund,, uint256 netRefund, uint256 avgPricePerShare) = views.quoteSell(marketId, optionId, sellQty);
         assertGt(rawRefund, 0, "rawRefund should be > 0");
         assertGt(netRefund, 0, "netRefund should be > 0");
         assertGt(avgPricePerShare, 0, "avg price should be > 0");

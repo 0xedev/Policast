@@ -4,10 +4,9 @@ pragma solidity ^0.8.9;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import { UD60x18, ud } from "@prb/math/src/UD60x18.sol";
+import {UD60x18, ud} from "@prb/math/src/UD60x18.sol";
 
 contract LMSRPredictionMarket is Ownable, ReentrancyGuard {
-
     enum MarketOutcome {
         UNRESOLVED,
         OPTION_A,
@@ -36,46 +35,28 @@ contract LMSRPredictionMarket is Ownable, ReentrancyGuard {
     uint256 public marketCount;
     mapping(uint256 => Market) public markets;
 
-    event MarketCreated(
-        uint256 indexed marketId,
-        string question,
-        string optionA,
-        string optionB,
-        uint256 endTime
-    );
+    event MarketCreated(uint256 indexed marketId, string question, string optionA, string optionB, uint256 endTime);
 
-    event SharesPurchased(
-        uint256 indexed marketId,
-        address indexed buyer,
-        bool isOptionA,
-        uint256 amount
-    );
+    event SharesPurchased(uint256 indexed marketId, address indexed buyer, bool isOptionA, uint256 amount);
 
     event MarketResolved(uint256 indexed marketId, MarketOutcome outcome);
 
     event MarketRemoved(uint256 indexed marketId);
 
-    event Claimed(
-        uint256 indexed marketId,
-        address indexed user,
-        uint256 amount
-    );
+    event Claimed(uint256 indexed marketId, address indexed user, uint256 amount);
 
     constructor(address _bettingToken) Ownable(msg.sender) {
         bettingToken = IERC20(_bettingToken);
-        
     }
 
-
-    function _canSetOwner() internal view virtual  returns (bool) {
+    function _canSetOwner() internal view virtual returns (bool) {
         return msg.sender == owner();
     }
 
-
-    function createMarket (
+    function createMarket(
         string memory _question,
-        string memory _optionA, 
-        string memory _optionB, 
+        string memory _optionA,
+        string memory _optionB,
         uint256 _duration,
         uint256 _b
     ) external returns (uint256) {
@@ -96,20 +77,20 @@ contract LMSRPredictionMarket is Ownable, ReentrancyGuard {
     }
 
     function _cost(uint256 bWei, uint256 qAWei, uint256 qBWei) internal pure returns (uint256) {
-        UD60x18 b = ud(bWei);               
+        UD60x18 b = ud(bWei);
         UD60x18 qA = ud(qAWei);
         UD60x18 qB = ud(qBWei);
 
-        UD60x18 termA = qA.div(b).exp();    
-        UD60x18 termB = qB.div(b).exp();    
-        UD60x18 sum = termA.add(termB);     
-        UD60x18 lnSum = sum.ln();           
-        UD60x18 result = b.mul(lnSum);      
+        UD60x18 termA = qA.div(b).exp();
+        UD60x18 termB = qB.div(b).exp();
+        UD60x18 sum = termA.add(termB);
+        UD60x18 lnSum = sum.ln();
+        UD60x18 result = b.mul(lnSum);
 
-        return result.unwrap();             
+        return result.unwrap();
     }
 
-    function buyShares(uint256 _marketId, bool _isOptionA, uint256 _amount ) external nonReentrant {
+    function buyShares(uint256 _marketId, bool _isOptionA, uint256 _amount) external nonReentrant {
         Market storage market = markets[_marketId];
         require(block.timestamp < market.endTime, "Market trading period has ended");
         require(!market.resolved, "Market already resolved");
@@ -127,23 +108,23 @@ contract LMSRPredictionMarket is Ownable, ReentrancyGuard {
         }
 
         // Update probabilities
-        UD60x18 b     = ud(market.b);
-        UD60x18 qA    = ud(market.totalOptionAShares);
-        UD60x18 qB    = ud(market.totalOptionBShares);
+        UD60x18 b = ud(market.b);
+        UD60x18 qA = ud(market.totalOptionAShares);
+        UD60x18 qB = ud(market.totalOptionBShares);
         UD60x18 expA = qA.div(b).exp();
         UD60x18 expB = qB.div(b).exp();
-        UD60x18 sum  = expA.add(expB);
+        UD60x18 sum = expA.add(expB);
         market.propA = expA.div(sum).mul(ud(1e18)).unwrap();
         market.propB = expB.div(sum).mul(ud(1e18)).unwrap();
 
         emit SharesPurchased(_marketId, msg.sender, _isOptionA, _amount);
     }
 
-    function getPriceForShares(
-    uint256 _marketId,
-    bool _isOptionA,
-    uint256 _amount
-    ) external view returns (uint256 price) {
+    function getPriceForShares(uint256 _marketId, bool _isOptionA, uint256 _amount)
+        external
+        view
+        returns (uint256 price)
+    {
         Market storage market = markets[_marketId];
         uint256 oldQA = market.totalOptionAShares;
         uint256 oldQB = market.totalOptionBShares;
@@ -201,45 +182,43 @@ contract LMSRPredictionMarket is Ownable, ReentrancyGuard {
         emit Claimed(_marketId, msg.sender, winnings);
     }
 
-    function getMarketInfo(
-        uint256 _marketId
-    ) external view returns (
-        string memory question,
-        string memory optionA,
-        string memory optionB, 
-        uint256 endTime,
-        MarketOutcome outcome, 
-        uint256 totalOptionAShares, 
-        uint256 totalOptionBShares, 
-        bool resolved,
-        uint256 propA,
-        uint256 propB
-    ) 
+    function getMarketInfo(uint256 _marketId)
+        external
+        view
+        returns (
+            string memory question,
+            string memory optionA,
+            string memory optionB,
+            uint256 endTime,
+            MarketOutcome outcome,
+            uint256 totalOptionAShares,
+            uint256 totalOptionBShares,
+            bool resolved,
+            uint256 propA,
+            uint256 propB
+        )
     {
         Market storage market = markets[_marketId];
         return (
-            market.question, 
-            market.optionA, 
-            market.optionB, 
-            market.endTime, 
-            market.outcome, 
-            market.totalOptionAShares, 
-            market.totalOptionBShares, 
+            market.question,
+            market.optionA,
+            market.optionB,
+            market.endTime,
+            market.outcome,
+            market.totalOptionAShares,
+            market.totalOptionBShares,
             market.resolved,
             market.propA,
             market.propB
         );
     }
 
-    function getSharesBalance(
-        uint256 _marketId,
-        address _user
-    ) external view returns (uint256 optionAShares, uint256 optionBShares) {
+    function getSharesBalance(uint256 _marketId, address _user)
+        external
+        view
+        returns (uint256 optionAShares, uint256 optionBShares)
+    {
         Market storage market = markets[_marketId];
-        return (
-            market.optionASharesBalance[_user],
-            market.optionBSharesBalance[_user]
-        );
+        return (market.optionASharesBalance[_user], market.optionBSharesBalance[_user]);
     }
-
 }

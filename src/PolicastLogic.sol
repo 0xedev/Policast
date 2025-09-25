@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {LMSRMath} from "./LMSRMath.sol";
+import {LMSRMath} from "./LMSRMath.sol"; // retain for computeB
+import {LMSRMathPRB} from "./LMSRMathPRB.sol";
 
 /**
  * @title PolicastLogic
@@ -49,15 +50,12 @@ library PolicastLogic {
         if (options.length != market.optionCount) revert PriceInvariant(); // Validate array length
 
         uint256 b = market.lmsrB;
-        uint256[] memory scaled = new uint256[](market.optionCount);
-
+        uint256[] memory shares = new uint256[](market.optionCount);
         for (uint256 i = 0; i < market.optionCount; i++) {
-            scaled[i] = (options[i].totalShares * 1e18) / b;
+            shares[i] = options[i].totalShares;
         }
-
-        (uint256 maxScaled, uint256 lnSumExp) = LMSRMath.logSumExp(scaled);
-        uint256 lmsrRaw = (b * (maxScaled + lnSumExp)) / 1e18;
-        return lmsrRaw * 100; // Apply 100x scaling for 1:100 share-to-token ratio
+        uint256 lmsrRaw = LMSRMathPRB.cost(b, shares); // share units (1e18)
+        return (lmsrRaw * PAYOUT_PER_SHARE) / 1e18; // tokens
     }
 
     /**
@@ -66,23 +64,18 @@ library PolicastLogic {
      * @param shares Array of share amounts for each option
      * @return LMSR cost in tokens
      */
-   function calculateLMSRCostWithShares(MarketData memory market, uint256[] memory shares)
-        internal pure returns (uint256)
+    function calculateLMSRCostWithShares(MarketData memory market, uint256[] memory shares)
+        internal
+        pure
+        returns (uint256)
     {
         if (market.optionCount == 0) return 0;
         if (market.lmsrB == 0) revert PriceInvariant(); // Prevent division by zero
         if (shares.length != market.optionCount) revert PriceInvariant(); // Validate array length
 
         uint256 b = market.lmsrB;
-        uint256[] memory scaled = new uint256[](market.optionCount);
-
-        for (uint256 i = 0; i < market.optionCount; i++) {
-            scaled[i] = (shares[i] * 1e18) / b;
-        }
-
-        (uint256 maxScaled, uint256 lnSumExp) = LMSRMath.logSumExp(scaled);
-        uint256 lmsrRaw = (b * (maxScaled + lnSumExp)) / 1e18;
-        return lmsrRaw * 100; // Apply 100x scaling for 1:100 share-to-token ratio
+        uint256 lmsrRaw = LMSRMathPRB.cost(b, shares);
+        return (lmsrRaw * PAYOUT_PER_SHARE) / 1e18;
     }
 
     /**
@@ -90,7 +83,7 @@ library PolicastLogic {
      * @param market Market data structure
      */
     function validateBuySolvency(MarketData memory market) internal pure {
-        uint256 liability = market.maxOptionShares * 100; // Apply 100x scaling for 1:100 share-to-token ratio
+        uint256 liability = (market.maxOptionShares * PAYOUT_PER_SHARE) / 1e18; // convert shares to tokens
         uint256 available = market.userLiquidity + market.adminInitialLiquidity;
 
         if (available < liability) {
@@ -114,48 +107,15 @@ library PolicastLogic {
         if (options.length != market.optionCount) revert PriceInvariant(); // Validate array length
 
         uint256 b = market.lmsrB;
-        uint256[] memory scaled = new uint256[](market.optionCount);
-
+        uint256[] memory shares = new uint256[](market.optionCount);
         for (uint256 i = 0; i < market.optionCount; i++) {
-            scaled[i] = (options[i].totalShares * 1e18) / b;
+            shares[i] = options[i].totalShares;
         }
-
-        (uint256 maxScaled,) = LMSRMath.logSumExp(scaled);
-
-        // Compute exp(q_i/b - max)
-        uint256[] memory expVals = new uint256[](market.optionCount);
-        uint256 denom = 0;
-
-        for (uint256 i = 0; i < market.optionCount; i++) {
-            uint256 diff = scaled[i] >= maxScaled ? 0 : (maxScaled - scaled[i]);
-            uint256 e = LMSRMath.expNeg(diff);
-            expVals[i] = e;
-            
-            // Overflow protection for denominator
-            if (denom > type(uint256).max - e) revert PriceInvariant();
-            denom += e;
-        }
-
-        uint256[] memory prices = new uint256[](market.optionCount);
-
-        if (denom == 0) {
-            // Fallback to uniform distribution (1.0 tokens total split equally)
-            uint256 uniform = 1e18 / market.optionCount;
-            for (uint256 i = 0; i < market.optionCount; i++) {
-                prices[i] = uniform;
-            }
-        } else {
-            // Calculate normalized probabilities with improved precision
-            for (uint256 i = 0; i < market.optionCount; i++) {
-                // Use higher precision intermediate calculation to reduce precision loss
-                uint256 p = (expVals[i] * 1e18) / denom;
-                prices[i] = p;
-            }
-        }
+        uint256[] memory prices = LMSRMathPRB.probabilities(b, shares);
 
         // Validate prices BEFORE updating options array (atomicity)
         _validatePrices(prices);
-        
+
         // Only update options after validation passes
         for (uint256 i = 0; i < market.optionCount; i++) {
             options[i].currentPrice = prices[i];
@@ -183,13 +143,15 @@ library PolicastLogic {
 
         for (uint256 i = 0; i < prices.length; i++) {
             uint256 p = prices[i];
-            if (p > 1e18) {  // Individual prices should not exceed 100%
+            if (p > 1e18) {
+                // Individual prices should not exceed 100%
                 revert PriceInvariant();
             }
             sumProb += p;
         }
 
-        if (sumProb + PROB_EPS < 1e18 || sumProb > 1e18 + PROB_EPS) {  // Sum should be ~1e18 (100%)
+        if (sumProb + PROB_EPS < 1e18 || sumProb > 1e18 + PROB_EPS) {
+            // Sum should be ~1e18 (100%)
             revert ProbabilityInvariant();
         }
     }

@@ -28,10 +28,10 @@ contract FullMarketCycleNewTest is Test {
         views = new PolicastViews(address(market));
         vm.stopPrank();
 
-    // Distribute tokens to participants
-    token.transfer(OWNER, 1_000_000e18);
-    token.transfer(ALICE, 1_000_000e18);
-    token.transfer(BOB, 1_000_000e18);
+        // Distribute tokens to participants
+        token.transfer(OWNER, 1_000_000e18);
+        token.transfer(ALICE, 1_000_000e18);
+        token.transfer(BOB, 1_000_000e18);
     }
 
     function testFullCycle_TwoOptions() public {
@@ -40,9 +40,11 @@ contract FullMarketCycleNewTest is Test {
         token.approve(address(market), type(uint256).max);
 
         string[] memory names = new string[](2);
-        names[0] = "YES"; names[1] = "NO";
+        names[0] = "YES";
+        names[1] = "NO";
         string[] memory desc = new string[](2);
-        desc[0] = ""; desc[1] = "";
+        desc[0] = "";
+        desc[1] = "";
 
         uint256 initialLiquidity = 10_000e18; // >= 1000e18
         uint256 marketId = market.createMarket(
@@ -62,8 +64,8 @@ contract FullMarketCycleNewTest is Test {
         vm.stopPrank();
 
         // Check initial prices: 0.5 prob -> 50 tokens per share
-    (,,, , uint256 currentPrice0, ) = market.getMarketOption(marketId, 0);
-    (,,, , uint256 currentPrice1, ) = market.getMarketOption(marketId, 1);
+        (,,,, uint256 currentPrice0,) = market.getMarketOption(marketId, 0);
+        (,,,, uint256 currentPrice1,) = market.getMarketOption(marketId, 1);
         assertEq(currentPrice0, 5e17, "init prob 0");
         assertEq(currentPrice1, 5e17, "init prob 1");
         uint256 tokenPrice0 = views.getOptionPriceInTokens(marketId, 0);
