@@ -44,6 +44,8 @@ contract CreateMarketOnBaseSimple is Script {
         PolicastMarketV3.MarketType marketType = PolicastMarketV3.MarketType.PAID; // 0
         uint256 initialLiquidity = 1000 ether; // 1000 tokens
         bool earlyResolutionAllowed = true;
+        PolicastMarketV3.FreeMarketParams memory freeParams =
+            PolicastMarketV3.FreeMarketParams({maxFreeParticipants: 0, tokensPerParticipant: 0});
 
         console2.log("Market parameters:");
         console2.log("Question:", question);
@@ -64,7 +66,8 @@ contract CreateMarketOnBaseSimple is Script {
             category,
             marketType,
             initialLiquidity,
-            earlyResolutionAllowed
+            earlyResolutionAllowed,
+            freeParams
         );
 
         console2.log("Market created successfully! Market ID:", marketId);

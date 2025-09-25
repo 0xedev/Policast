@@ -115,6 +115,11 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         mapping(address => uint256) tokensReceived; // Amount of free tokens claimed per user
     }
 
+    struct FreeMarketParams {
+        uint256 maxFreeParticipants;
+        uint256 tokensPerParticipant;
+    }
+
     struct Market {
         string question;
         string description;
@@ -175,7 +180,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     address public previousBettingToken; // Track previous token for migration
     uint256 public tokenUpdatedAt; // When token was last updated
     uint256 public marketCount;
-    uint256 public tradeCount;
     uint256 public globalTradeCount; // NEW: Total trades across all markets
     uint256 public platformFeeRate = 200; // 2% (basis points)
     uint256 public constant MAX_OPTIONS = 10;
@@ -203,10 +207,8 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     mapping(uint256 => Market) internal markets;
     mapping(address => UserPortfolio) public userPortfolios;
     mapping(address => Trade[]) public userTradeHistory;
-    mapping(uint256 => Trade[]) public marketTrades;
     mapping(uint256 => mapping(uint256 => PricePoint[])) public priceHistory; // marketId => optionId => prices
     mapping(MarketCategory => uint256[]) public categoryMarkets;
-    mapping(address => uint256) public totalWinnings; // DEPRECATED: use userPortfolios.totalWinnings instead
     mapping(MarketType => uint256[]) public marketsByType; // Markets by type
     // Cost basis tracking for proper PnL calculation: user => marketId => optionId => total cost basis
     mapping(address => mapping(uint256 => mapping(uint256 => uint256))) public userCostBasis;
@@ -244,8 +246,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         address indexed buyer,
         address seller,
         uint256 price,
-        uint256 quantity,
-        uint256 tradeId
+        uint256 quantity
     );
     event SharesSold(
         uint256 indexed marketId, uint256 indexed optionId, address indexed seller, uint256 quantity, uint256 price
@@ -253,7 +254,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     event MarketResolved(uint256 indexed marketId, uint256 winningOptionId, address resolver);
     event MarketDisputed(uint256 indexed marketId, address disputer, string reason);
     event Claimed(uint256 indexed marketId, address indexed user, uint256 amount);
-    event FeeCollected(uint256 indexed marketId, uint256 amount);
     event MarketPaused(uint256 indexed marketId);
     event PlatformFeesWithdrawn(address indexed collector, uint256 amount);
     event AdminLiquidityWithdrawn(uint256 indexed marketId, address indexed creator, uint256 amount);
@@ -264,10 +264,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
     event BComputed(uint256 indexed marketId, uint256 bValue, uint256 coverageRatioNum, uint256 coverageRatioDen);
     event FeesUnlocked(uint256 indexed marketId, uint256 amount);
     event FeeAccrued(uint256 indexed marketId, uint256 indexed optionId, bool isBuy, uint256 rawAmount, uint256 fee);
-    // NEW enhanced analytics events
-    event PricesUpdated(uint256 indexed marketId, uint256[] prices);
     // New: Emit token-denominated prices (probability * PAYOUT_PER_SHARE)
-    event TokenPricesUpdated(uint256 indexed marketId, uint256[] tokenPrices);
     event SlippageProtect(
         uint256 indexed marketId,
         uint256 indexed optionId,
@@ -369,8 +366,65 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         MarketCategory _category,
         MarketType _marketType,
         uint256 _initialLiquidity,
-        bool _earlyResolutionAllowed // NEW parameter
+        bool _earlyResolutionAllowed
     ) public nonReentrant whenNotPaused returns (uint256) {
+        FreeMarketParams memory emptyParams = FreeMarketParams({maxFreeParticipants: 0, tokensPerParticipant: 0});
+        return _createMarket(
+            _question,
+            _description,
+            _optionNames,
+            _optionDescriptions,
+            _duration,
+            _category,
+            _marketType,
+            _initialLiquidity,
+            _earlyResolutionAllowed,
+            emptyParams
+        );
+    }
+
+    function createMarket(
+        string memory _question,
+        string memory _description,
+        string[] memory _optionNames,
+        string[] memory _optionDescriptions,
+        uint256 _duration,
+        MarketCategory _category,
+        MarketType _marketType,
+        uint256 _initialLiquidity,
+        bool _earlyResolutionAllowed,
+        FreeMarketParams calldata _freeParams
+    ) public nonReentrant whenNotPaused returns (uint256) {
+        FreeMarketParams memory params = FreeMarketParams({
+            maxFreeParticipants: _freeParams.maxFreeParticipants,
+            tokensPerParticipant: _freeParams.tokensPerParticipant
+        });
+        return _createMarket(
+            _question,
+            _description,
+            _optionNames,
+            _optionDescriptions,
+            _duration,
+            _category,
+            _marketType,
+            _initialLiquidity,
+            _earlyResolutionAllowed,
+            params
+        );
+    }
+
+    function _createMarket(
+        string memory _question,
+        string memory _description,
+        string[] memory _optionNames,
+        string[] memory _optionDescriptions,
+        uint256 _duration,
+        MarketCategory _category,
+        MarketType _marketType,
+        uint256 _initialLiquidity,
+        bool _earlyResolutionAllowed,
+        FreeMarketParams memory _freeParams
+    ) internal returns (uint256) {
         if (msg.sender != owner() && !hasRole(QUESTION_CREATOR_ROLE, msg.sender)) revert NotAuthorized();
         if (_duration < MIN_MARKET_DURATION || _duration > MAX_MARKET_DURATION) revert BadDuration();
         if (bytes(_question).length == 0) revert EmptyQuestion();
@@ -378,8 +432,18 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         if (_optionNames.length != _optionDescriptions.length) revert LengthMismatch();
         if (_initialLiquidity < 100 * 1e18) revert MinTokensRequired();
 
-        // Transfer initial liquidity from creator
-        if (!bettingToken.transferFrom(msg.sender, address(this), _initialLiquidity)) revert TransferFailed();
+        uint256 totalPrizePool = 0;
+
+        if (_marketType == MarketType.FREE_ENTRY) {
+            if (_freeParams.maxFreeParticipants == 0) revert InvalidInput();
+            if (_freeParams.tokensPerParticipant == 0) revert InvalidInput();
+            totalPrizePool = _freeParams.maxFreeParticipants * _freeParams.tokensPerParticipant;
+        } else {
+            if (_freeParams.maxFreeParticipants != 0 || _freeParams.tokensPerParticipant != 0) revert InvalidInput();
+        }
+
+        uint256 totalRequired = _initialLiquidity + totalPrizePool;
+        if (!bettingToken.transferFrom(msg.sender, address(this), totalRequired)) revert TransferFailed();
 
         uint256 marketId = marketCount++;
         Market storage market = markets[marketId];
@@ -391,16 +455,14 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         market.creator = msg.sender;
         market.createdAt = block.timestamp;
         market.optionCount = _optionNames.length;
-        market.earlyResolutionAllowed = _earlyResolutionAllowed; // NEW: Set the flag
-        uint256 b = _computeB(_initialLiquidity, _optionNames.length); // Auto-computed LMSR b
+        market.earlyResolutionAllowed = _earlyResolutionAllowed;
+        uint256 b = _computeB(_initialLiquidity, _optionNames.length);
         market.lmsrB = b;
 
-        // Track admin's initial liquidity separately
         market.adminInitialLiquidity = _initialLiquidity;
-        market.userLiquidity = 0; // No user liquidity yet
+        market.userLiquidity = 0;
 
-        // Initialize options with equal starting prices (1.0 tokens total, split equally) - createMarket
-        uint256 initialPrice = 1e18 / _optionNames.length; // Equal price distribution
+        uint256 initialPrice = 1e18 / _optionNames.length;
 
         for (uint256 i = 0; i < _optionNames.length; i++) {
             market.options[i] = MarketOption({
@@ -412,96 +474,25 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
                 isActive: true
             });
 
-            // Initialize price history
             priceHistory[marketId][i].push(PricePoint({price: initialPrice, timestamp: block.timestamp, volume: 0}));
         }
 
         categoryMarkets[_category].push(marketId);
         marketsByType[_marketType].push(marketId);
 
-        emit MarketCreated(marketId, _question, _optionNames, market.endTime, _category, _marketType, msg.sender);
-        emit BComputed(marketId, b, LMSR_COVERAGE_RATIO_NUM, LMSR_COVERAGE_RATIO_DEN);
-        return marketId;
-    }
+        if (_marketType == MarketType.FREE_ENTRY) {
+            market.freeConfig.maxFreeParticipants = _freeParams.maxFreeParticipants;
+            market.freeConfig.tokensPerParticipant = _freeParams.tokensPerParticipant;
+            market.freeConfig.totalPrizePool = totalPrizePool;
+            market.freeConfig.remainingPrizePool = totalPrizePool;
+            market.freeConfig.isActive = true;
 
-    //     // Create Free Entry Market
-    function createFreeMarket(
-        string memory _question,
-        string memory _description,
-        string[] memory _optionNames,
-        string[] memory _optionDescriptions,
-        uint256 _duration,
-        MarketCategory _category,
-        uint256 _maxFreeParticipants,
-        uint256 _tokensPerParticipant,
-        uint256 _initialLiquidity,
-        bool _earlyResolutionAllowed // NEW parameter
-    ) external nonReentrant whenNotPaused returns (uint256) {
-        // Calculate total required: liquidity + prize pool
-        uint256 totalPrizePool = _maxFreeParticipants * _tokensPerParticipant;
-        uint256 totalRequired = _initialLiquidity + totalPrizePool;
-
-        // Transfer both liquidity and prize pool from creator
-        if (!bettingToken.transferFrom(msg.sender, address(this), totalRequired)) revert TransferFailed();
-
-        // Create market WITHOUT calling the internal createMarket to avoid double transfer
-        if (msg.sender != owner() && !hasRole(QUESTION_CREATOR_ROLE, msg.sender)) revert NotAuthorized();
-        if (_duration < MIN_MARKET_DURATION || _duration > MAX_MARKET_DURATION) revert BadDuration();
-        if (bytes(_question).length == 0) revert EmptyQuestion();
-        if (_optionNames.length < 2 || _optionNames.length > MAX_OPTIONS) revert BadOptionCount();
-        if (_optionNames.length != _optionDescriptions.length) revert LengthMismatch();
-        if (_initialLiquidity < 100 * 1e18) revert MinTokensRequired();
-
-        uint256 marketId = marketCount++;
-        Market storage market = markets[marketId];
-        market.question = _question;
-        market.description = _description;
-        market.endTime = block.timestamp + _duration;
-        market.category = _category;
-        market.marketType = MarketType.FREE_ENTRY;
-        market.creator = msg.sender;
-        market.createdAt = block.timestamp;
-        market.optionCount = _optionNames.length;
-        market.earlyResolutionAllowed = _earlyResolutionAllowed; // NEW: Set the flag
-        uint256 b = _computeB(_initialLiquidity, _optionNames.length); // Auto-computed LMSR b
-        market.lmsrB = b;
-
-        // Track admin's initial liquidity separately
-        market.adminInitialLiquidity = _initialLiquidity;
-        market.userLiquidity = 0; // No user liquidity yet
-
-        // Initialize options with equal starting prices (1.0 tokens total, split equally) - createFreeMarket
-        uint256 initialPrice = 1e18 / _optionNames.length; // Equal price distribution
-
-        for (uint256 i = 0; i < _optionNames.length; i++) {
-            market.options[i] = MarketOption({
-                name: _optionNames[i],
-                description: _optionDescriptions[i],
-                totalShares: 0,
-                totalVolume: 0,
-                currentPrice: initialPrice,
-                isActive: true
-            });
-
-            // Initialize price history
-            priceHistory[marketId][i].push(PricePoint({price: initialPrice, timestamp: block.timestamp, volume: 0}));
+            emit FreeMarketConfigSet(
+                marketId, _freeParams.maxFreeParticipants, _freeParams.tokensPerParticipant, totalPrizePool
+            );
         }
 
-        categoryMarkets[_category].push(marketId);
-        marketsByType[MarketType.FREE_ENTRY].push(marketId);
-
-        // Configure free market settings
-        market.freeConfig.maxFreeParticipants = _maxFreeParticipants;
-        market.freeConfig.tokensPerParticipant = _tokensPerParticipant;
-        market.freeConfig.totalPrizePool = totalPrizePool;
-        market.freeConfig.remainingPrizePool = totalPrizePool;
-        market.freeConfig.isActive = true;
-
-        emit FreeMarketConfigSet(marketId, _maxFreeParticipants, _tokensPerParticipant, totalPrizePool);
-
-        emit MarketCreated(
-            marketId, _question, _optionNames, market.endTime, _category, MarketType.FREE_ENTRY, msg.sender
-        );
+        emit MarketCreated(marketId, _question, _optionNames, market.endTime, _category, _marketType, msg.sender);
         emit BComputed(marketId, b, LMSR_COVERAGE_RATIO_NUM, LMSR_COVERAGE_RATIO_DEN);
         return marketId;
     }
@@ -693,16 +684,14 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
             timestamp: block.timestamp
         });
         userTradeHistory[msg.sender].push(trade);
-        marketTrades[_marketId].push(trade);
 
         // Interactions: External call at the very end
         if (!bettingToken.transferFrom(msg.sender, address(this), totalCost)) revert TransferFailed();
 
         // Events after successful interaction
         emit FeeAccrued(_marketId, _optionId, true, rawCost, fee);
-        emit TradeExecuted(_marketId, _optionId, msg.sender, address(0), effectiveAvg, _quantity, tradeCount++);
+        emit TradeExecuted(_marketId, _optionId, msg.sender, address(0), effectiveAvg, _quantity);
         globalTradeCount++; // Track global trade count
-        emit FeeCollected(_marketId, fee);
     }
 
     // Backward-compatible wrapper (deprecated): aggregate bound ignored
@@ -809,16 +798,14 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
             timestamp: block.timestamp
         });
         userTradeHistory[msg.sender].push(trade);
-        marketTrades[_marketId].push(trade);
 
         // Interactions: External call at the very end
         if (!bettingToken.transfer(msg.sender, netRefund)) revert TransferFailed();
 
         // Events after successful interaction
         emit FeeAccrued(_marketId, _optionId, false, rawRefund, fee);
-        emit TradeExecuted(_marketId, _optionId, address(0), msg.sender, effectiveAvg, _quantity, tradeCount++);
+        emit TradeExecuted(_marketId, _optionId, address(0), msg.sender, effectiveAvg, _quantity);
         globalTradeCount++; // Track global trade count
-        emit FeeCollected(_marketId, fee);
         if (_minTotalProceeds != 0) {
             emit SlippageProtect(_marketId, _optionId, false, _quantity, _minTotalProceeds, netRefund);
         }
@@ -830,8 +817,8 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         if (msg.sender != owner() && !hasRole(QUESTION_RESOLVE_ROLE, msg.sender)) revert NotAuthorized();
         Market storage market = markets[_marketId];
 
-        // Require market validation before resolution
-        if (!market.validated) revert MarketNotValidated();
+        // Require market validation before resolution unless market has been invalidated
+        if (!market.validated && !market.invalidated) revert MarketNotValidated();
 
         // NEW: Allow early resolution for event-based markets
         if (!market.earlyResolutionAllowed && block.timestamp < market.endTime) {
@@ -911,9 +898,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
 
         userPortfolios[msg.sender].totalWinnings += winnings;
         userPortfolios[msg.sender].realizedPnL += int256(winnings) - int256(costBasis);
-        // NOTE: The standalone totalWinnings[msg.sender] mapping is deprecated.
-        // We keep the mapping for backwards compatibility but no longer update it to avoid
-        // redundancy and potential desync. Use userPortfolios[user].totalWinnings instead.
         emit UserPortfolioUpdated(
             msg.sender,
             userPortfolios[msg.sender].totalInvested,
@@ -988,17 +972,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         emit AdminLiquidityWithdrawn(0, owner(), _amount); // Use marketId 0 for emergency withdrawals
     }
 
-    // NEW: Get withdrawable admin liquidity for a market
-    function getWithdrawableAdminLiquidity(uint256 _marketId) external view validMarket(_marketId) returns (uint256) {
-        Market storage market = markets[_marketId];
-
-        // Must be resolved or invalidated, and not already claimed
-        if ((!market.resolved && !market.invalidated) || market.adminLiquidityClaimed) {
-            return 0;
-        }
-
-        return market.adminInitialLiquidity;
-    }
+    // NOTE: getWithdrawableAdminLiquidity moved to views to reduce core size
 
     // Helper Functions
 
@@ -1103,14 +1077,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         for (uint256 i = 0; i < market.optionCount; i++) {
             market.options[i].currentPrice = prices[i]; // Use prices[i] not options[i].currentPrice
         }
-
-        emit PricesUpdated(_marketId, prices);
-        // Also emit token-denominated prices for convenience
-        uint256[] memory tokenPrices = new uint256[](market.optionCount);
-        for (uint256 i = 0; i < market.optionCount; i++) {
-            tokenPrices[i] = (prices[i] * PAYOUT_PER_SHARE) / 1e18;
-        }
-        emit TokenPricesUpdated(_marketId, tokenPrices);
     }
 
     function _computeB(uint256 _initialLiquidity, uint256 _optionCount) internal pure returns (uint256) {
@@ -1144,18 +1110,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         );
     }
 
-    function getMarketFeeStatus(uint256 _marketId)
-        external
-        view
-        validMarket(_marketId)
-        returns (uint256 collected, bool unlocked, uint256 lockedPortion)
-    {
-        Market storage market = markets[_marketId];
-        collected = market.platformFeesCollected;
-        unlocked = market.feesUnlocked;
-        lockedPortion = unlocked ? 0 : collected;
-        return (collected, unlocked, lockedPortion);
-    }
+    // NOTE: getMarketFeeStatus moved to views to reduce core size
 
     // Getter function for views contract access
     function getMarketBasicInfo(uint256 _marketId)
@@ -1187,48 +1142,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         );
     }
 
-    function getMarketInfo(uint256 _marketId)
-        external
-        view
-        returns (
-            string memory question,
-            string memory description,
-            uint256 endTime,
-            MarketCategory category,
-            uint256 optionCount,
-            bool resolved,
-            uint256 winningOptionId,
-            bool disputed,
-            bool validated,
-            bool invalidated,
-            uint256 totalVolume,
-            address creator,
-            bool earlyResolutionAllowed
-        )
-    {
-        // Checks
-        require(_marketId < marketCount, "Market does not exist");
-
-        // Effects: None (pure view)
-
-        // Interactions: None
-        Market storage market = markets[_marketId];
-        return (
-            market.question,
-            market.description,
-            market.endTime,
-            market.category,
-            market.optionCount,
-            market.resolved,
-            market.winningOptionId,
-            market.disputed,
-            market.validated,
-            market.invalidated,
-            market.totalVolume,
-            market.creator,
-            market.earlyResolutionAllowed
-        );
-    }
 
     function getMarketOptionUserShares(uint256 _marketId, uint256 _optionId, address _user)
         external
@@ -1236,7 +1149,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         returns (uint256)
     {
         Market storage market = markets[_marketId];
-        require(_optionId < market.optionCount, "Invalid option ID");
+        if (_optionId > market.optionCount) revert InvalidOption();
         return market.userShares[_user][_optionId];
     }
 
@@ -1244,23 +1157,25 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         return markets[_marketId].lmsrB;
     }
 
-    function getPlatformFeeBreakdownData()
+    /**
+     * @notice Lightweight accessor for extended market metadata moved out of the heavy getMarketInfo tuple
+     * @dev Returns only fields not already exposed by getMarketBasicInfo. Intended for PolicastViews.
+     */
+    function getMarketExtendedMeta(uint256 _marketId)
         external
         view
+        validMarket(_marketId)
         returns (
-            uint256 cumulativeFees,
-            uint256 lockedFees,
-            uint256 unlockedFees,
-            uint256 withdrawnFees,
-            address collector
+            uint256 winningOptionId,
+            bool disputed,
+            bool validated,
+            address creator,
+            bool earlyResolutionAllowed
         )
     {
-        return (
-            totalPlatformFeesCollected,
-            totalLockedPlatformFees,
-            totalUnlockedPlatformFees,
-            totalWithdrawnPlatformFees,
-            feeCollector
-        );
+        Market storage m = markets[_marketId];
+        return (m.winningOptionId, m.disputed, m.validated, m.creator, m.earlyResolutionAllowed);
     }
+
+    // NOTE: getPlatformFeeBreakdownData moved to views to reduce core size
 }

@@ -78,7 +78,7 @@ contract PolicastBasicTest is Test {
 
     function testCreateMarketAndValidate() public {
         uint256 mId = _createSimpleMarket();
-        (,, uint256 endTime,, uint256 optionCount,,,,,,,,) = market.getMarketInfo(mId);
+    (,, uint256 endTime,, uint256 optionCount,,,,) = market.getMarketBasicInfo(mId);
         assertEq(optionCount, 3, "option count");
         assertGt(endTime, block.timestamp, "end time");
     }
@@ -345,9 +345,9 @@ contract PolicastBasicTest is Test {
         market.claimWinnings(mId);
     }
 
-    function testGetMarketInfo() public {
+    function testGetMarketBasicInfoReplacement() public {
         uint256 mId = _createSimpleMarket();
-        (,,,, uint256 optionCount,,,,,,,,) = market.getMarketInfo(mId);
+        (,,,, uint256 optionCount,,,,) = market.getMarketBasicInfo(mId);
         assertEq(optionCount, 3);
     }
 
@@ -567,17 +567,17 @@ contract PolicastBasicTest is Test {
         descs[0] = "Yes";
         descs[1] = "No";
 
-        uint256 mId = market.createFreeMarket(
+        uint256 mId = market.createMarket(
             "Will it rain?",
             "Weather prediction",
             names,
             descs,
             1 days,
             PolicastMarketV3.MarketCategory.WEATHER,
-            100, // max participants
-            10e18, // tokens per participant
+            PolicastMarketV3.MarketType.FREE_ENTRY,
             1000e18, // liquidity
-            false
+            false,
+            PolicastMarketV3.FreeMarketParams({maxFreeParticipants: 100, tokensPerParticipant: 10e18})
         );
         vm.stopPrank();
 
@@ -601,17 +601,17 @@ contract PolicastBasicTest is Test {
         descs[0] = "A";
         descs[1] = "B";
 
-        uint256 mId = market.createFreeMarket(
+        uint256 mId = market.createMarket(
             "Test Free",
             "Free market test",
             names,
             descs,
             1 days,
             PolicastMarketV3.MarketCategory.OTHER,
-            10,
-            5e18,
+            PolicastMarketV3.MarketType.FREE_ENTRY,
             100e18,
-            false
+            false,
+            PolicastMarketV3.FreeMarketParams({maxFreeParticipants: 10, tokensPerParticipant: 5e18})
         );
         vm.stopPrank();
 
@@ -632,17 +632,17 @@ contract PolicastBasicTest is Test {
         descs[0] = "A";
         descs[1] = "B";
 
-        uint256 mId = market.createFreeMarket(
+        uint256 mId = market.createMarket(
             "Test Free",
             "Free market test",
             names,
             descs,
             1 days,
             PolicastMarketV3.MarketCategory.OTHER,
-            2, // only 2 participants allowed
-            5e18,
+            PolicastMarketV3.MarketType.FREE_ENTRY,
             100e18,
-            false
+            false,
+            PolicastMarketV3.FreeMarketParams({maxFreeParticipants: 2, tokensPerParticipant: 5e18})
         );
         vm.stopPrank();
 
@@ -672,17 +672,17 @@ contract PolicastBasicTest is Test {
         descs[0] = "A";
         descs[1] = "B";
 
-        uint256 mId = market.createFreeMarket(
+        uint256 mId = market.createMarket(
             "Test Free",
             "Free market test",
             names,
             descs,
             1 days,
             PolicastMarketV3.MarketCategory.OTHER,
-            10,
-            5e18,
+            PolicastMarketV3.MarketType.FREE_ENTRY,
             100e18,
-            false
+            false,
+            PolicastMarketV3.FreeMarketParams({maxFreeParticipants: 10, tokensPerParticipant: 5e18})
         );
         vm.stopPrank();
 

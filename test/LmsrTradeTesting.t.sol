@@ -251,8 +251,17 @@ contract LmsrTradeTesting is Test {
         descs[0] = "A";
         descs[1] = "B";
         // maxFreeParticipants = 3, tokensPerParticipant = 100e18, initialLiquidity = 5000 ether
-        uint256 mId = market.createFreeMarket(
-            "Free Q", "D", names, descs, 2 days, PolicastMarketV3.MarketCategory.OTHER, 3, 100e18, 5000 ether, false
+        uint256 mId = market.createMarket(
+            "Free Q",
+            "D",
+            names,
+            descs,
+            2 days,
+            PolicastMarketV3.MarketCategory.OTHER,
+            PolicastMarketV3.MarketType.FREE_ENTRY,
+            5000 ether,
+            false,
+            PolicastMarketV3.FreeMarketParams({maxFreeParticipants: 3, tokensPerParticipant: 100e18})
         );
         market.validateMarket(mId);
         vm.stopPrank();

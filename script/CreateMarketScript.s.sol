@@ -46,6 +46,8 @@ contract CreateMarketScript is Script {
         PolicastMarketV3.MarketCategory category = PolicastMarketV3.MarketCategory.POLITICS; // 0
         PolicastMarketV3.MarketType marketType = PolicastMarketV3.MarketType.PAID; // 0
         bool earlyResolutionAllowed = true;
+        PolicastMarketV3.FreeMarketParams memory freeParams =
+            PolicastMarketV3.FreeMarketParams({maxFreeParticipants: 0, tokensPerParticipant: 0});
 
         uint256 marketId = policast.createMarket(
             question,
@@ -56,7 +58,8 @@ contract CreateMarketScript is Script {
             category,
             marketType,
             initialLiquidity,
-            earlyResolutionAllowed
+            earlyResolutionAllowed,
+            freeParams
         );
 
         console2.log("Market created successfully!");

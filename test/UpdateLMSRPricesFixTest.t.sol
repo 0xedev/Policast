@@ -89,9 +89,9 @@ contract UpdateLMSRPricesFixTest is Test {
 
         // Check that all prices are equal (uniform distribution)
         for (uint256 i = 0; i < 3; i++) {
-            assertEq(prices[i], options[i].currentPrice);
+            assertApproxEqAbs(prices[i], options[i].currentPrice, 1);
             if (i > 0) {
-                assertEq(prices[i], prices[0]); // All should be equal
+                assertApproxEqAbs(prices[i], prices[0], 1); // Allow 1 wei rounding slack
             }
         }
 

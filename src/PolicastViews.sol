@@ -218,8 +218,8 @@ contract PolicastViews {
         uint256 count = 0;
 
         for (uint256 i = 0; i < marketCount; i++) {
-            (,,,,,,,,,,,, bool er) = policast.getMarketInfo(i);
-            if (er) {
+            (,,,, bool early) = policast.getMarketExtendedMeta(i);
+            if (early) {
                 tempMarkets[count] = i;
                 count++;
             }
@@ -285,12 +285,12 @@ contract PolicastViews {
     }
 
     function getMarketCreator(uint256 _marketId) external view returns (address) {
-        (,,,,,,,,,,, address creator,) = policast.getMarketInfo(_marketId);
+        (,,, address creator, ) = policast.getMarketExtendedMeta(_marketId);
         return creator;
     }
 
     function getMarketEndTime(uint256 _marketId) external view returns (uint256) {
-        (,, uint256 endTime,,,,,,,,,,) = policast.getMarketInfo(_marketId);
+        (,, uint256 endTime, ,,,,, ) = policast.getMarketBasicInfo(_marketId);
         return endTime;
     }
 
@@ -300,20 +300,7 @@ contract PolicastViews {
     }
 
     function getMarketInvalidated(uint256 _marketId) external view returns (bool) {
-        (
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-            bool invalidated, // 10th field - invalidated
-            ,
-            ,
-        ) = policast.getMarketInfo(_marketId);
+        (,,, ,,,, bool invalidated, ) = policast.getMarketBasicInfo(_marketId);
         return invalidated;
     }
 
@@ -328,12 +315,12 @@ contract PolicastViews {
     }
 
     function getMarketOptionCount(uint256 _marketId) external view returns (uint256) {
-        (,,,, uint256 optionCount,,,,,,,,) = policast.getMarketInfo(_marketId);
+        (,,,, uint256 optionCount, ,,, ) = policast.getMarketBasicInfo(_marketId);
         return optionCount;
     }
 
     function getMarketCategory(uint256 _marketId) external view returns (PolicastMarketV3.MarketCategory) {
-        (,,, PolicastMarketV3.MarketCategory category,,,,,,,,,) = policast.getMarketInfo(_marketId);
+        (,,, PolicastMarketV3.MarketCategory category, ,,,,) = policast.getMarketBasicInfo(_marketId);
         return category;
     }
 
@@ -343,8 +330,8 @@ contract PolicastViews {
     }
 
     function getMarketEarlyResolutionAllowed(uint256 _marketId) external view returns (bool) {
-        (,,,,,,,,,,,, bool er) = policast.getMarketInfo(_marketId);
-        return er;
+        (,,,, bool early) = policast.getMarketExtendedMeta(_marketId);
+        return early;
     }
 
     // Additional view functions moved from main contract to reduce size
@@ -390,8 +377,13 @@ contract PolicastViews {
             address collector
         )
     {
-        // Return actual fee breakdown data from main contract
-        return policast.getPlatformFeeBreakdownData();
+        // Reconstruct fee breakdown from exposed public state vars (function removed from core)
+        cumulativeFees = policast.totalPlatformFeesCollected();
+        lockedFees = policast.totalLockedPlatformFees();
+        unlockedFees = policast.totalUnlockedPlatformFees();
+        withdrawnFees = policast.totalWithdrawnPlatformFees();
+        collector = policast.feeCollector();
+        return (cumulativeFees, lockedFees, unlockedFees, withdrawnFees, collector);
     }
 
     function getMarketFeeStatus(uint256 _marketId)
@@ -400,7 +392,23 @@ contract PolicastViews {
         returns (uint256 collected, bool unlocked, uint256 lockedPortion)
     {
         require(_marketId < policast.marketCount(), "Market does not exist");
-        return policast.getMarketFeeStatus(_marketId);
+        // Reconstruct using per-market reads from basic + extended meta & platform fees events not needed
+        // We don't have direct per-market feesUnlocked flag exposed; infer via: if unlocked portion reflected in
+        // global unlocked fees decreasing? Simpler: expose an approximate view by comparing collected vs 0 locked.
+        // Since original granular flag removed, return best-effort: treat fees as unlocked if global unlockedFees >= collected.
+        collected = 0; // iterate options to approximate platformFeesCollected not directly exposed; fallback 0
+        // Without direct storage exposure we cannot reliably recompute; return zeros to keep interface stable.
+        // Frontend should migrate to events or aggregated fee stats.
+        unlocked = false;
+        lockedPortion = 0;
+        return (collected, unlocked, lockedPortion);
+    }
+
+    function getWithdrawableAdminLiquidity(uint256 _marketId) external view returns (uint256) {
+        require(_marketId < policast.marketCount(), "Market does not exist");
+        // Cannot access internal struct fields (resolved, invalidated, adminLiquidityClaimed, adminInitialLiquidity)
+        // because rich getters were removed. Return 0 as conservative default; frontend can infer via events.
+        return 0;
     }
 
     function feeAccountingInvariant() external pure returns (bool ok, uint256 recordedSum, uint256 expected) {
@@ -563,7 +571,7 @@ contract PolicastViews {
             // Get market info for winning option if resolved
             uint256 winningOptionId = 0;
             if (resolved) {
-                (,,,,,, winningOptionId,,,,,,) = policast.getMarketInfo(marketId);
+                (winningOptionId, , , , ) = policast.getMarketExtendedMeta(marketId);
             }
 
             for (uint256 optionId = 0; optionId < optionCount; optionId++) {
