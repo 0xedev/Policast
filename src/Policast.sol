@@ -1142,7 +1142,6 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         );
     }
 
-
     function getMarketOptionUserShares(uint256 _marketId, uint256 _optionId, address _user)
         external
         view
@@ -1165,13 +1164,7 @@ contract PolicastMarketV3 is Ownable, ReentrancyGuard, AccessControl, Pausable {
         external
         view
         validMarket(_marketId)
-        returns (
-            uint256 winningOptionId,
-            bool disputed,
-            bool validated,
-            address creator,
-            bool earlyResolutionAllowed
-        )
+        returns (uint256 winningOptionId, bool disputed, bool validated, address creator, bool earlyResolutionAllowed)
     {
         Market storage m = markets[_marketId];
         return (m.winningOptionId, m.disputed, m.validated, m.creator, m.earlyResolutionAllowed);

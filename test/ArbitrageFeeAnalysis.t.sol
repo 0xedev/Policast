@@ -110,8 +110,8 @@ contract ArbitrageFeeAnalysis is Test {
 
         // Claim winnings
         vm.prank(ARBITRAGEUR);
-    uint256 preClaimShares = policast.getMarketOptionUserShares(marketId, 0, ARBITRAGEUR);
-    console.log("Pre-claim YES shares:", preClaimShares / 1e18, "shares");
+        uint256 preClaimShares = policast.getMarketOptionUserShares(marketId, 0, ARBITRAGEUR);
+        console.log("Pre-claim YES shares:", preClaimShares / 1e18, "shares");
         uint256 balanceBeforeClaim = token.balanceOf(ARBITRAGEUR);
         // Re-prank since the earlier vm.prank only applied to the first subsequent call
         vm.prank(ARBITRAGEUR);
@@ -181,7 +181,7 @@ contract ArbitrageFeeAnalysis is Test {
         // Claim winnings
         vm.prank(ARBITRAGEUR);
         uint256 balanceBeforeClaim = token.balanceOf(ARBITRAGEUR);
-    vm.prank(ARBITRAGEUR);
+        vm.prank(ARBITRAGEUR);
         policast.claimWinnings(marketId);
         uint256 claimAmount = token.balanceOf(ARBITRAGEUR) - balanceBeforeClaim;
 
@@ -280,7 +280,7 @@ contract ArbitrageFeeAnalysis is Test {
         // Claim winnings
         vm.prank(ARBITRAGEUR);
         uint256 balanceBeforeClaim = token.balanceOf(ARBITRAGEUR);
-    vm.prank(ARBITRAGEUR);
+        vm.prank(ARBITRAGEUR);
         policast.claimWinnings(threeWayMarketId);
         uint256 claimAmount = token.balanceOf(ARBITRAGEUR) - balanceBeforeClaim;
 

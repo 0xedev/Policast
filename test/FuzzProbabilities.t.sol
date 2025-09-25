@@ -23,14 +23,18 @@ contract FuzzProbabilitiesTest is Test {
 
     function setUp() public {
         token = new MockERC20(100_000_000 ether);
-        vm.prank(creator); market = new PolicastMarketV3(address(token));
+        vm.prank(creator);
+        market = new PolicastMarketV3(address(token));
         views = new PolicastViews(address(market));
         token.transfer(creator, 20_000_000 ether);
         token.transfer(userA, 20_000_000 ether);
         token.transfer(userB, 20_000_000 ether);
-        vm.prank(creator); token.approve(address(market), type(uint256).max);
-        vm.prank(userA); token.approve(address(market), type(uint256).max);
-        vm.prank(userB); token.approve(address(market), type(uint256).max);
+        vm.prank(creator);
+        token.approve(address(market), type(uint256).max);
+        vm.prank(userA);
+        token.approve(address(market), type(uint256).max);
+        vm.prank(userB);
+        token.approve(address(market), type(uint256).max);
         vm.startPrank(creator);
         market.grantQuestionCreatorRole(creator);
         market.grantQuestionResolveRole(creator);
@@ -41,7 +45,10 @@ contract FuzzProbabilitiesTest is Test {
     function _create(uint256 n) internal returns (uint256) {
         string[] memory names = new string[](n);
         string[] memory descs = new string[](n);
-        for (uint256 i; i < n; i++) { names[i] = string(abi.encodePacked("F", vm.toString(i))); descs[i] = names[i]; }
+        for (uint256 i; i < n; i++) {
+            names[i] = string(abi.encodePacked("F", vm.toString(i)));
+            descs[i] = names[i];
+        }
         vm.startPrank(creator);
         uint256 id = market.createMarket(
             "Fuzz",

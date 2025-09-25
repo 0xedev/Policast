@@ -285,12 +285,12 @@ contract PolicastViews {
     }
 
     function getMarketCreator(uint256 _marketId) external view returns (address) {
-        (,,, address creator, ) = policast.getMarketExtendedMeta(_marketId);
+        (,,, address creator,) = policast.getMarketExtendedMeta(_marketId);
         return creator;
     }
 
     function getMarketEndTime(uint256 _marketId) external view returns (uint256) {
-        (,, uint256 endTime, ,,,,, ) = policast.getMarketBasicInfo(_marketId);
+        (,, uint256 endTime,,,,,,) = policast.getMarketBasicInfo(_marketId);
         return endTime;
     }
 
@@ -300,7 +300,7 @@ contract PolicastViews {
     }
 
     function getMarketInvalidated(uint256 _marketId) external view returns (bool) {
-        (,,, ,,,, bool invalidated, ) = policast.getMarketBasicInfo(_marketId);
+        (,,,,,,, bool invalidated,) = policast.getMarketBasicInfo(_marketId);
         return invalidated;
     }
 
@@ -315,12 +315,12 @@ contract PolicastViews {
     }
 
     function getMarketOptionCount(uint256 _marketId) external view returns (uint256) {
-        (,,,, uint256 optionCount, ,,, ) = policast.getMarketBasicInfo(_marketId);
+        (,,,, uint256 optionCount,,,,) = policast.getMarketBasicInfo(_marketId);
         return optionCount;
     }
 
     function getMarketCategory(uint256 _marketId) external view returns (PolicastMarketV3.MarketCategory) {
-        (,,, PolicastMarketV3.MarketCategory category, ,,,,) = policast.getMarketBasicInfo(_marketId);
+        (,,, PolicastMarketV3.MarketCategory category,,,,,) = policast.getMarketBasicInfo(_marketId);
         return category;
     }
 
@@ -571,7 +571,7 @@ contract PolicastViews {
             // Get market info for winning option if resolved
             uint256 winningOptionId = 0;
             if (resolved) {
-                (winningOptionId, , , , ) = policast.getMarketExtendedMeta(marketId);
+                (winningOptionId,,,,) = policast.getMarketExtendedMeta(marketId);
             }
 
             for (uint256 optionId = 0; optionId < optionCount; optionId++) {

@@ -35,13 +35,21 @@ library LMSRMathPRB {
 
         uint256 lnN;
         if (optionCount == 2) lnN = 693147180559945309; // ln(2)
+
         else if (optionCount == 3) lnN = 1098612288668109692; // ln(3)
+
         else if (optionCount == 4) lnN = 1386294361119890648; // ln(4)
+
         else if (optionCount == 5) lnN = 1609437912434100375; // ln(5)
+
         else if (optionCount == 6) lnN = 1783378370508591168; // ln(6)
+
         else if (optionCount == 7) lnN = 1922703101705143167; // ln(7)
+
         else if (optionCount == 8) lnN = 2037421927016425482; // ln(8)
+
         else if (optionCount == 9) lnN = 2133745237141597423; // ln(9)
+
         else lnN = 2218487496163563680; // ln(10)
 
         uint256 sharesEquivalent = (initialLiquidity * ONE) / payoutPerShare; // convert tokens to share units
@@ -100,7 +108,7 @@ library LMSRMathPRB {
         }
         // sumExp is 1e18 scaled sum of exponentials ( >=1e18 )
         // logSumExp = maxR + ln(sumExp)
-    uint256 lnSum = UD60x18.unwrap(UD60x18.wrap(sumExp).ln()); // ln(sumExp) where sumExp is 1e18 scaled
+        uint256 lnSum = UD60x18.unwrap(UD60x18.wrap(sumExp).ln()); // ln(sumExp) where sumExp is 1e18 scaled
         uint256 logSumExp = maxR + lnSum; // 1e18 scaled
         costShares = (b * logSumExp) / ONE; // (1e18 * 1e18)/1e18 => 1e18
     }
@@ -151,15 +159,21 @@ library LMSRMathPRB {
         if (sumExp == 0) {
             // fallback uniform
             uint256 uniform = ONE / n;
-            for (uint256 i = 0; i < n; i++) probs[i] = uniform;
+            for (uint256 i = 0; i < n; i++) {
+                probs[i] = uniform;
+            }
             return probs;
         }
         // Softmax probabilities initial pass
-        uint256 maxProb; uint256 maxIndex;
+        uint256 maxProb;
+        uint256 maxIndex;
         for (uint256 i = 0; i < n; i++) {
             uint256 p = (expVals[i] * ONE) / sumExp;
             probs[i] = p;
-            if (p > maxProb) { maxProb = p; maxIndex = i; }
+            if (p > maxProb) {
+                maxProb = p;
+                maxIndex = i;
+            }
         }
         // Hard cap at 95%: if exceeded, redistribute excess to others proportionally.
         uint256 CAP = 950000000000000000; // 0.95 * 1e18
@@ -170,7 +184,9 @@ library LMSRMathPRB {
                 // Distribute uniformly among other buckets
                 probs[maxIndex] = CAP;
                 uint256 per = targetOthers / (n - 1);
-                for (uint256 i = 0; i < n; i++) if (i != maxIndex) probs[i] = per;
+                for (uint256 i = 0; i < n; i++) {
+                    if (i != maxIndex) probs[i] = per;
+                }
             } else {
                 for (uint256 i = 0; i < n; i++) {
                     if (i == maxIndex) continue;
@@ -184,36 +200,57 @@ library LMSRMathPRB {
         uint256 FLOOR = 1e6; // 1e-12 * 1e18
         uint256 added;
         for (uint256 i = 0; i < n; i++) {
-            if (probs[i] < FLOOR) { added += (FLOOR - probs[i]); probs[i] = FLOOR; }
+            if (probs[i] < FLOOR) {
+                added += (FLOOR - probs[i]);
+                probs[i] = FLOOR;
+            }
         }
         if (added > 0) {
             // Prefer taking from capped bucket if it is the largest and above FLOOR
             uint256 largest = 0;
-            for (uint256 i = 1; i < n; i++) if (probs[i] > probs[largest]) largest = i;
+            for (uint256 i = 1; i < n; i++) {
+                if (probs[i] > probs[largest]) largest = i;
+            }
             if (probs[largest] > added) {
                 probs[largest] -= added;
                 if (largest == maxIndex && probs[largest] > CAP) probs[largest] = CAP; // safety
             } else {
                 // proportional fallback normalize
                 uint256 tot;
-                for (uint256 i = 0; i < n; i++) tot += probs[i];
-                for (uint256 i = 0; i < n; i++) probs[i] = (probs[i] * ONE) / tot;
+                for (uint256 i = 0; i < n; i++) {
+                    tot += probs[i];
+                }
+                for (uint256 i = 0; i < n; i++) {
+                    probs[i] = (probs[i] * ONE) / tot;
+                }
             }
         }
         // Final normalization adjust (rounding drift)
         uint256 sumFinal;
-        for (uint256 i = 0; i < n; i++) sumFinal += probs[i];
+        for (uint256 i = 0; i < n; i++) {
+            sumFinal += probs[i];
+        }
         if (sumFinal != ONE) {
             if (sumFinal > ONE) {
                 uint256 diff = sumFinal - ONE;
-                uint256 largest = 0; for (uint256 i = 1; i < n; i++) if (probs[i] > probs[largest]) largest = i;
-                if (probs[largest] > diff) probs[largest] -= diff; else probs[largest] = 1; // minimal fallback
-            } else { // sumFinal < ONE
+                uint256 largest = 0;
+                for (uint256 i = 1; i < n; i++) {
+                    if (probs[i] > probs[largest]) largest = i;
+                }
+                if (probs[largest] > diff) probs[largest] -= diff;
+                else probs[largest] = 1; // minimal fallback
+            } else {
+                // sumFinal < ONE
                 uint256 diff = ONE - sumFinal;
                 // Add diff to first non-capped bucket if capped bucket already at CAP
                 uint256 target = maxIndex;
                 if (probs[maxIndex] >= CAP) {
-                    for (uint256 i = 0; i < n; i++) { if (i != maxIndex) { target = i; break; } }
+                    for (uint256 i = 0; i < n; i++) {
+                        if (i != maxIndex) {
+                            target = i;
+                            break;
+                        }
+                    }
                 }
                 probs[target] += diff;
                 if (target == maxIndex && probs[target] > CAP) probs[target] = CAP; // clamp again

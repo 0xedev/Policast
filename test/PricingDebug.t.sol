@@ -118,29 +118,30 @@ contract PricingDebugTest is Test {
         vm.startPrank(buyer);
         token.approve(address(market), type(uint256).max);
 
-    // 1. Get the expected cost from the view function (ΔC + fee)
-    (uint256 rawCost, uint256 fee, uint256 totalCost, uint256 avgPricePerShare) = views.quoteBuy(marketId, optionId, quantity);
+        // 1. Get the expected cost from the view function (ΔC + fee)
+        (uint256 rawCost, uint256 fee, uint256 totalCost, uint256 avgPricePerShare) =
+            views.quoteBuy(marketId, optionId, quantity);
 
-    // Basic sanity checks on raw cost & fee
-    assertGt(rawCost, 0, "Raw cost zero");
-    uint256 expectedFee = (rawCost * 200) / 10000; // 2%
-    uint256 feeDiff = fee > expectedFee ? fee - expectedFee : expectedFee - fee;
-    assertLt(feeDiff, 2, "Fee mismatch");
+        // Basic sanity checks on raw cost & fee
+        assertGt(rawCost, 0, "Raw cost zero");
+        uint256 expectedFee = (rawCost * 200) / 10000; // 2%
+        uint256 feeDiff = fee > expectedFee ? fee - expectedFee : expectedFee - fee;
+        assertLt(feeDiff, 2, "Fee mismatch");
 
-    // Compute linear (no-slippage) reference cost
-    (,,,, uint256 optionCurrentPrice,) = market.getMarketOption(marketId, optionId);
-    uint256 probTimesQty = (optionCurrentPrice * quantity) / 1e18; // 1e18-scaled shares * price
-    uint256 linearRaw = (probTimesQty * 100e18) / 1e18; // tokens without fee
-    uint256 linearFee = (linearRaw * 200) / 10000;
-    uint256 linearTotal = linearRaw + linearFee;
+        // Compute linear (no-slippage) reference cost
+        (,,,, uint256 optionCurrentPrice,) = market.getMarketOption(marketId, optionId);
+        uint256 probTimesQty = (optionCurrentPrice * quantity) / 1e18; // 1e18-scaled shares * price
+        uint256 linearRaw = (probTimesQty * 100e18) / 1e18; // tokens without fee
+        uint256 linearFee = (linearRaw * 200) / 10000;
+        uint256 linearTotal = linearRaw + linearFee;
 
-    // Slippage ratio (scaled 1e18). Expect small positive slippage.
-    uint256 slippageNumerator = totalCost > linearTotal ? totalCost - linearTotal : 0;
-    uint256 slippageRatio = (slippageNumerator * 1e18) / linearTotal; // 1e18 scaled
-    // Require <5% slippage for this trade size given large B
-    assertLt(slippageRatio, 5e16, "Buy slippage >5% unexpected");
-    // Prevent runaway cost
-    assertLt(totalCost, linearTotal * 2, "Quoted buy cost >2x linear");
+        // Slippage ratio (scaled 1e18). Expect small positive slippage.
+        uint256 slippageNumerator = totalCost > linearTotal ? totalCost - linearTotal : 0;
+        uint256 slippageRatio = (slippageNumerator * 1e18) / linearTotal; // 1e18 scaled
+        // Require <5% slippage for this trade size given large B
+        assertLt(slippageRatio, 5e16, "Buy slippage >5% unexpected");
+        // Prevent runaway cost
+        assertLt(totalCost, linearTotal * 2, "Quoted buy cost >2x linear");
 
         console.log("=== Actual Buy Execution Test ===");
         console.log("Buyer starting balance:", token.balanceOf(buyer));
@@ -162,15 +163,16 @@ contract PricingDebugTest is Test {
         console.log("Buyer balance after buy:", balanceAfterBuy);
         console.log("Actual cost deducted:", actualCost);
 
-    // The actual cost deducted must exactly match the total cost from the quote
-    assertEq(actualCost, totalCost, "Actual cost deducted does not match quoted total cost");
+        // The actual cost deducted must exactly match the total cost from the quote
+        assertEq(actualCost, totalCost, "Actual cost deducted does not match quoted total cost");
 
-    // Realized slippage should match quoted slippage within tolerance
-    uint256 realizedSlippage = totalCost > linearTotal ? ((totalCost - linearTotal) * 1e18) / linearTotal : 0;
-    uint256 slipDiff = realizedSlippage > slippageRatio ? realizedSlippage - slippageRatio : slippageRatio - realizedSlippage;
-    assertLt(slipDiff, 5e12, "Realized vs quoted slippage drift");
+        // Realized slippage should match quoted slippage within tolerance
+        uint256 realizedSlippage = totalCost > linearTotal ? ((totalCost - linearTotal) * 1e18) / linearTotal : 0;
+        uint256 slipDiff =
+            realizedSlippage > slippageRatio ? realizedSlippage - slippageRatio : slippageRatio - realizedSlippage;
+        assertLt(slipDiff, 5e12, "Realized vs quoted slippage drift");
 
-    console.log("SUCCESS: Actual buy cost matches quote. Slippage (bps):", slippageRatio / 1e14);
+        console.log("SUCCESS: Actual buy cost matches quote. Slippage (bps):", slippageRatio / 1e14);
 
         console.log("\n=== Actual Sell Execution Test ===");
 

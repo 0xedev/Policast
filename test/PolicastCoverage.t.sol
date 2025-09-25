@@ -77,7 +77,7 @@ contract PolicastCoverage is Test {
         assertEq(rec, exp);
 
         // market fee status (getter removed from core; views now returns placeholder zeros)
-        (,bool unlocked, uint256 lockedPortion) = views.getMarketFeeStatus(mId);
+        (, bool unlocked, uint256 lockedPortion) = views.getMarketFeeStatus(mId);
         // We only assert interface shape; detailed values no longer provided from core for size reasons
         assertEq(unlocked, false);
         assertEq(lockedPortion, 0);

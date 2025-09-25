@@ -21,8 +21,8 @@ contract AdminLiquidityWithdrawalTest is Test {
 
         // Deploy token and policast
         token = new MockERC20(100000 * 1e18); // Owner gets all tokens initially
-    policast = new PolicastMarketV3(address(token));
-    views = new PolicastViews(address(policast));
+        policast = new PolicastMarketV3(address(token));
+        views = new PolicastViews(address(policast));
 
         // Grant roles
         policast.grantQuestionCreatorRole(creator);
@@ -80,7 +80,7 @@ contract AdminLiquidityWithdrawalTest is Test {
         vm.prank(owner);
         policast.resolveMarket(marketId, 0);
 
-    // Skip querying removed getter; rely on actual withdrawal effects
+        // Skip querying removed getter; rely on actual withdrawal effects
 
         // Record creator balance before withdrawal
         uint256 balanceBefore = token.balanceOf(creator);
@@ -98,7 +98,7 @@ contract AdminLiquidityWithdrawalTest is Test {
         vm.expectRevert(PolicastMarketV3.AdminLiquidityAlreadyClaimed.selector);
         policast.withdrawAdminLiquidity(marketId);
 
-    // Removed withdrawable getter assertion (moved to views returning conservative 0)
+        // Removed withdrawable getter assertion (moved to views returning conservative 0)
     }
 
     function testWithdrawAdminLiquidityAfterInvalidation() public {
@@ -140,7 +140,7 @@ contract AdminLiquidityWithdrawalTest is Test {
         uint256 balanceAfterInvalidation = token.balanceOf(creator);
         assertEq(balanceAfterInvalidation - balanceBefore, initialLiquidity);
 
-    // Removed withdrawable assertion; refund effect validated via balance delta
+        // Removed withdrawable assertion; refund effect validated via balance delta
     }
 
     function testEmergencyWithdraw() public {

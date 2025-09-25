@@ -25,8 +25,10 @@ contract MultiOptionDeterministicTest is Test {
         token.transfer(creator, 10_000_000 ether);
         token.transfer(user, 10_000_000 ether);
 
-        vm.prank(creator); token.approve(address(market), type(uint256).max);
-        vm.prank(user); token.approve(address(market), type(uint256).max);
+        vm.prank(creator);
+        token.approve(address(market), type(uint256).max);
+        vm.prank(user);
+        token.approve(address(market), type(uint256).max);
 
         vm.startPrank(creator);
         market.grantQuestionCreatorRole(creator);
@@ -39,7 +41,10 @@ contract MultiOptionDeterministicTest is Test {
         vm.startPrank(creator);
         string[] memory names = new string[](n);
         string[] memory descs = new string[](n);
-        for (uint256 i; i < n; i++) { names[i] = string(abi.encodePacked("O", vm.toString(i))); descs[i] = names[i]; }
+        for (uint256 i; i < n; i++) {
+            names[i] = string(abi.encodePacked("O", vm.toString(i)));
+            descs[i] = names[i];
+        }
         uint256 id = market.createMarket(
             "Deterministic",
             "Deterministic",
@@ -57,7 +62,7 @@ contract MultiOptionDeterministicTest is Test {
     }
 
     function testInitialEqualProbabilities() public {
-        uint256[5] memory counts = [uint256(2),4,5,6,8];
+        uint256[5] memory counts = [uint256(2), 4, 5, 6, 8];
         for (uint256 idx; idx < counts.length; idx++) {
             uint256 n = counts[idx];
             uint256 id = _create(n);
@@ -74,14 +79,16 @@ contract MultiOptionDeterministicTest is Test {
     }
 
     function testSmallTradeAdjustsOneProbability() public {
-        uint256[5] memory counts = [uint256(2),4,5,6,8];
+        uint256[5] memory counts = [uint256(2), 4, 5, 6, 8];
         for (uint256 idx; idx < counts.length; idx++) {
             uint256 n = counts[idx];
             uint256 id = _create(n);
 
             // capture before
             uint256[] memory beforeP = new uint256[](n);
-            for (uint256 i; i < n; i++) beforeP[i] = views.calculateCurrentPrice(id, i);
+            for (uint256 i; i < n; i++) {
+                beforeP[i] = views.calculateCurrentPrice(id, i);
+            }
 
             vm.prank(user);
             market.buyShares(id, 0, SMALL_QTY, 5e20, 0); // generous max price
@@ -89,14 +96,20 @@ contract MultiOptionDeterministicTest is Test {
             // after
             uint256 sum = 0;
             uint256[] memory afterP = new uint256[](n);
-            for (uint256 i; i < n; i++) { afterP[i] = views.calculateCurrentPrice(id, i); sum += afterP[i]; }
+            for (uint256 i; i < n; i++) {
+                afterP[i] = views.calculateCurrentPrice(id, i);
+                sum += afterP[i];
+            }
 
             // Option 0 probability should increase
             assertGt(afterP[0], beforeP[0], "target prob should rise");
             // Others should not increase (strictly) all simultaneously; at least one other should decrease
             bool anyDecrease = false;
             for (uint256 i = 1; i < n; i++) {
-                if (afterP[i] < beforeP[i]) { anyDecrease = true; break; }
+                if (afterP[i] < beforeP[i]) {
+                    anyDecrease = true;
+                    break;
+                }
             }
             assertTrue(anyDecrease, "some other decreased");
             // Sum conservation

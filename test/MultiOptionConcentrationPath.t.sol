@@ -38,18 +38,21 @@ contract MultiOptionConcentrationPathTest is Test {
         vm.stopPrank();
 
         // Fund trader
-        vm.prank(owner); token.transfer(trader, TRADER_FUNDS);
-        vm.prank(trader); token.approve(address(market), type(uint256).max);
-        vm.prank(owner); token.approve(address(market), type(uint256).max);
+        vm.prank(owner);
+        token.transfer(trader, TRADER_FUNDS);
+        vm.prank(trader);
+        token.approve(address(market), type(uint256).max);
+        vm.prank(owner);
+        token.approve(address(market), type(uint256).max);
     }
 
     struct StepSnapshot {
-        uint256 cost;              // tokens paid (including fee)
-        uint256[] probs;           // probabilities (sum ~ 1e18)
-        uint256[] tokenPrices;     // probability * 100 (scaled 1e18)
-        int256 unrealizedPnL;      // aggregate unrealized PnL after step (from views)
-        int256 realizedPnL;        // realized PnL (should stay 0 for only buys)
-        uint256 cumulativeCost;    // sum of total costs paid so far (includes fee)
+        uint256 cost; // tokens paid (including fee)
+        uint256[] probs; // probabilities (sum ~ 1e18)
+        uint256[] tokenPrices; // probability * 100 (scaled 1e18)
+        int256 unrealizedPnL; // aggregate unrealized PnL after step (from views)
+        int256 realizedPnL; // realized PnL (should stay 0 for only buys)
+        uint256 cumulativeCost; // sum of total costs paid so far (includes fee)
         int256 expectedUnrealized; // locally recomputed expected unrealized PnL
     }
 
@@ -78,14 +81,14 @@ contract MultiOptionConcentrationPathTest is Test {
         // Required shares q to achieve p=CAP (softmax with others 0):
         // p = 1 / (1 + (n-1) * exp(-q/b)) => exp(-q/b) = (1-p)/(p*(n-1)) => q = -b * ln((1-p)/(p*(n-1)))
         // All quantities are 1e18 scaled. We'll compute ratio scaled (1e18) then ln via PRB-Math UD60x18.
-    uint256 num = CAP * (optionCount - 1); // p*(n-1)
-    uint256 den = ONE - CAP;              // (1-p)
-    // ratio' = (p*(n-1))/(1-p) >= 1 for p>=1/n ; ensures ln input >= 1
-    uint256 ratioPrime = (num * ONE) / den; // 1e18 scaled
-    require(ratioPrime >= ONE, "ratioPrime<1");
-    uint256 lnRatioPrime = UD60x18.unwrap(UD60x18.wrap(ratioPrime).ln()); // ln(ratio') positive
-    // From derivation: q = b * ln( (p*(n-1))/(1-p) )
-    uint256 qNeeded = (b * lnRatioPrime) / ONE;
+        uint256 num = CAP * (optionCount - 1); // p*(n-1)
+        uint256 den = ONE - CAP; // (1-p)
+        // ratio' = (p*(n-1))/(1-p) >= 1 for p>=1/n ; ensures ln input >= 1
+        uint256 ratioPrime = (num * ONE) / den; // 1e18 scaled
+        require(ratioPrime >= ONE, "ratioPrime<1");
+        uint256 lnRatioPrime = UD60x18.unwrap(UD60x18.wrap(ratioPrime).ln()); // ln(ratio') positive
+        // From derivation: q = b * ln( (p*(n-1))/(1-p) )
+        uint256 qNeeded = (b * lnRatioPrime) / ONE;
         // Add a 1% safety margin to ensure we cross the natural softmax threshold so cap logic triggers
         qNeeded = (qNeeded * 101) / 100;
         // Split into at most 5 equal(ish) buys to observe path dynamics
@@ -98,15 +101,21 @@ contract MultiOptionConcentrationPathTest is Test {
         }
 
         // Execute buys until cap reached or max steps
-        StepSnapshot[] memory rawSteps = _executeConcentratedBuys(marketId, optionCount, targetOption, stepsTarget, quantityPerBuy);
+        StepSnapshot[] memory rawSteps =
+            _executeConcentratedBuys(marketId, optionCount, targetOption, stepsTarget, quantityPerBuy);
         // Determine actual number of steps used to reach cap (cap may be reached early)
         uint256 reachedIndex = stepsTarget - 1;
         for (uint256 i = 0; i < rawSteps.length; i++) {
-            if (rawSteps[i].probs[targetOption] >= CAP - TOL) { reachedIndex = i; break; }
+            if (rawSteps[i].probs[targetOption] >= CAP - TOL) {
+                reachedIndex = i;
+                break;
+            }
         }
         // Trim array if cap reached early
         StepSnapshot[] memory steps = new StepSnapshot[](reachedIndex + 1);
-        for (uint256 i = 0; i <= reachedIndex; i++) steps[i] = rawSteps[i];
+        for (uint256 i = 0; i <= reachedIndex; i++) {
+            steps[i] = rawSteps[i];
+        }
 
         // Assertions: final probability at cap within tolerance; others roughly equal sharing remaining 5%
         uint256 finalProb = steps[steps.length - 1].probs[targetOption];
@@ -179,10 +188,12 @@ contract MultiOptionConcentrationPathTest is Test {
             cumulativeCost += cost;
             // Fetch fresh unrealized PnL via view (portfolio mapping value may lag until explicit update in core logic)
             int256 unrealized = views.calculateUnrealizedPnL(trader);
-            (, , int256 storedUnrealized, int256 realized,) = market.userPortfolios(trader);
+            (,, int256 storedUnrealized, int256 realized,) = market.userPortfolios(trader);
             // Sanity: stored unrealized should either be zero (not actively updated on buys) or close to view value
             if (storedUnrealized != 0) {
-                int256 dd = storedUnrealized - unrealized; if (dd < 0) dd = -dd; require(uint256(dd) < 1e14, "Stored unrealized diverges");
+                int256 dd = storedUnrealized - unrealized;
+                if (dd < 0) dd = -dd;
+                require(uint256(dd) < 1e14, "Stored unrealized diverges");
             }
             // Recompute expected unrealized PnL for single-position scenario
             uint256 userShares = market.getMarketOptionUserShares(marketId, targetOption, trader);
@@ -219,7 +230,7 @@ contract MultiOptionConcentrationPathTest is Test {
         uint256 TOL = 1e6; // 1e-12 tolerance
         bool reachedCap;
         for (uint256 i = 1; i < steps.length; i++) {
-            uint256 prev = steps[i-1].probs[targetOption];
+            uint256 prev = steps[i - 1].probs[targetOption];
             uint256 curr = steps[i].probs[targetOption];
             if (!reachedCap) {
                 if (curr + TOL >= CAP) {
@@ -241,7 +252,7 @@ contract MultiOptionConcentrationPathTest is Test {
         for (uint256 i = 1; i < steps.length; i++) {
             for (uint256 j = 0; j < optionCount; j++) {
                 if (j == targetOption) continue;
-                uint256 prevO = steps[i-1].probs[j];
+                uint256 prevO = steps[i - 1].probs[j];
                 uint256 currO = steps[i].probs[j];
                 if (!reachedCap) {
                     require(currO + slack <= prevO + slack, "Non-target increased pre-cap");
@@ -266,7 +277,7 @@ contract MultiOptionConcentrationPathTest is Test {
         // 2. Target tokenPrice strictly increases until cap; then constant within tolerance
         bool priceCapped;
         for (uint256 i = 1; i < steps.length; i++) {
-            uint256 prevTP = steps[i-1].tokenPrices[targetOption];
+            uint256 prevTP = steps[i - 1].tokenPrices[targetOption];
             uint256 currTP = steps[i].tokenPrices[targetOption];
             if (!priceCapped) {
                 if (steps[i].probs[targetOption] + TOL >= CAP) {
@@ -281,7 +292,7 @@ contract MultiOptionConcentrationPathTest is Test {
         }
         // 3. Marginal per-share cost should be non-decreasing (rounding may keep equal occasionally)
         for (uint256 i = 1; i < steps.length; i++) {
-            uint256 prevMarginal = (steps[i-1].cost * 1e18) / quantityPerBuy; // scaled 1e18
+            uint256 prevMarginal = (steps[i - 1].cost * 1e18) / quantityPerBuy; // scaled 1e18
             uint256 currMarginal = (steps[i].cost * 1e18) / quantityPerBuy;
             require(currMarginal >= prevMarginal, "Marginal cost decreased");
         }
@@ -299,14 +310,17 @@ contract MultiOptionConcentrationPathTest is Test {
                 // Detect cap by probability plateau (price movement already validated above). If plateau triggers earlier logic, reachedCap was set.
                 // Here we approximate: if target token price difference <= tolerance we treat as plateau only if >= 0.95 - TOL.
                 // Simpler: if target probability >= 0.95e18 - 1e6 treat as cap reached.
-                if (steps[i-1].probs[targetOption] >= 950000000000000000 - 1e6) {
+                if (steps[i - 1].probs[targetOption] >= 950000000000000000 - 1e6) {
                     capReachedInUnrealized = true;
                 }
             }
             if (!capReachedInUnrealized) {
-                require(steps[i].unrealizedPnL + 1e12 >= steps[i-1].unrealizedPnL, "Unrealized PnL decreased pre-cap");
+                require(steps[i].unrealizedPnL + 1e12 >= steps[i - 1].unrealizedPnL, "Unrealized PnL decreased pre-cap");
             } else {
-                require(steps[i].unrealizedPnL <= steps[i-1].unrealizedPnL + 1e12, "Unrealized PnL increased post-cap (unexpected)");
+                require(
+                    steps[i].unrealizedPnL <= steps[i - 1].unrealizedPnL + 1e12,
+                    "Unrealized PnL increased post-cap (unexpected)"
+                );
             }
         }
     }
@@ -329,9 +343,16 @@ contract MultiOptionConcentrationPathTest is Test {
         if (v == 0) return "0";
         uint256 temp = v;
         uint256 digits;
-        while (temp != 0) { digits++; temp /= 10; }
+        while (temp != 0) {
+            digits++;
+            temp /= 10;
+        }
         bytes memory buffer = new bytes(digits);
-        while (v != 0) { digits -= 1; buffer[digits] = bytes1(uint8(48 + uint256(v % 10))); v /= 10; }
+        while (v != 0) {
+            digits -= 1;
+            buffer[digits] = bytes1(uint8(48 + uint256(v % 10)));
+            v /= 10;
+        }
         return string(buffer);
     }
 

@@ -78,7 +78,7 @@ contract PolicastBasicTest is Test {
 
     function testCreateMarketAndValidate() public {
         uint256 mId = _createSimpleMarket();
-    (,, uint256 endTime,, uint256 optionCount,,,,) = market.getMarketBasicInfo(mId);
+        (,, uint256 endTime,, uint256 optionCount,,,,) = market.getMarketBasicInfo(mId);
         assertEq(optionCount, 3, "option count");
         assertGt(endTime, block.timestamp, "end time");
     }
